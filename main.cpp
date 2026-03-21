@@ -15,8 +15,10 @@
 #include <algorithm>
 #include <limits>
 #include <deque>
+#include <filesystem>
 
 using namespace std;
+namespace fs = std::filesystem;
 
 struct Pose {
     Eigen::Matrix3d rotation_matrix;
@@ -134,6 +136,27 @@ struct AcceptedMotionStats {
 static bool path_exists(const string &path) {
     ifstream file(path);
     return file.good();
+}
+
+static string find_dataset_path(int argc, char **argv) {
+    if (argc >= 2) {
+        return argv[1];
+    }
+
+    const vector<string> candidates = {
+        "./rgbd_dataset_freiburg2_pioneer_slam3",
+        "../rgbd_dataset_freiburg2_pioneer_slam3",
+        "../../rgbd_dataset_freiburg2_pioneer_slam3",
+        "rgbd_dataset_freiburg2_pioneer_slam3"
+    };
+
+    for (const auto &candidate: candidates) {
+        if (fs::exists(candidate) && fs::is_directory(candidate)) {
+            return candidate;
+        }
+    }
+
+    return "";
 }
 
 static vector<pair<double, string> > load_timestamp_file(const string &file_path) {
@@ -1257,12 +1280,24 @@ static StepDiagnostics evaluate_step_diagnostics(
 }
 
 int main(int argc, char **argv) {
-    string dataset_path;
-    if (argc >= 2) {
-        dataset_path = argv[1];
-    } else {
-        dataset_path = "./rgbd_dataset_freiburg2_pioneer_slam3";
+    cout << "========================================" << endl;
+    cout << "  RGB-D SLAM System                     " << endl;
+    cout << "========================================" << endl;
+    cout << "current working directory: " << fs::current_path().string() << endl;
+
+    string dataset_path = find_dataset_path(argc, argv);
+    if (dataset_path.empty()) {
+        cerr << "dataset directory not found. expected one of:" << endl;
+        cerr << "  ./rgbd_dataset_freiburg2_pioneer_slam3" << endl;
+        cerr << "  ../rgbd_dataset_freiburg2_pioneer_slam3" << endl;
+        cerr << "  ../../rgbd_dataset_freiburg2_pioneer_slam3" << endl;
+        cerr << endl;
+        cerr << "run with an explicit path, for example:" << endl;
+        cerr << "  ./build/slam_system ../rgbd_dataset_freiburg2_pioneer_slam3" << endl;
+        return 1;
     }
+
+    cout << "dataset path: " << dataset_path << endl;
 
     string rgb_txt_path = dataset_path + "/rgb.txt";
     string depth_txt_path = dataset_path + "/depth.txt";
@@ -1371,6 +1406,14 @@ int main(int argc, char **argv) {
             .SetBounds(0.0, 1.0, 0.0, 1.0, -1280.0f / 720.0f)
             .SetHandler(new pangolin::Handler3D(camera_render_state));
 
+    cv::namedWindow("SLAM: Keypoints", cv::WINDOW_NORMAL);
+    cv::resizeWindow("SLAM: Keypoints", 960, 540);
+    cv::moveWindow("SLAM: Keypoints", 50, 500);
+    cv::waitKey(1);
+
+    bool paused = false;
+    int frame_delay_ms = 30;
+
     if (!extract_features(map_data.frames[0], orb)) {
         cerr << "feature extraction failed on first frame" << endl;
         return 1;
@@ -1404,6 +1447,8 @@ int main(int argc, char **argv) {
     write_csv_header(diagnostics_csv_file);
 
     cout << "initial map points added: " << initial_points_added << endl;
+    cout << "processing " << map_data.frames.size() << " frames..." << endl;
+    cout << "controls: q or ESC quit, SPACE pause/resume, +/- change speed" << endl;
 
     for (size_t frame_index = 1; frame_index < map_data.frames.size(); ++frame_index) {
         if (pangolin::ShouldQuit()) {
@@ -1424,6 +1469,25 @@ int main(int argc, char **argv) {
             cerr << "feature extraction failed for curr frame " << frame_curr.id << endl;
             continue;
         }
+
+        cv::Mat keypoint_view;
+        cv::drawKeypoints(
+            frame_curr.image_bgr,
+            frame_curr.keypoints,
+            keypoint_view,
+            cv::Scalar(0, 255, 0),
+            cv::DrawMatchesFlags::DRAW_RICH_KEYPOINTS
+        );
+        cv::putText(
+            keypoint_view,
+            "frame: " + to_string(frame_curr.id) + "  keypoints: " + to_string(frame_curr.keypoints.size()),
+            cv::Point(20, 35),
+            cv::FONT_HERSHEY_SIMPLEX,
+            0.8,
+            cv::Scalar(0, 255, 255),
+            2
+        );
+        cv::imshow("SLAM: Keypoints", keypoint_view);
 
         MatchInfo match_info = match_features(frame_prev, frame_curr);
 
@@ -1452,6 +1516,36 @@ int main(int argc, char **argv) {
             display.Activate(camera_render_state);
             draw_trajectory_and_map(map_data);
             pangolin::FinishFrame();
+
+            while (true) {
+                int key = cv::waitKey(paused ? 0 : frame_delay_ms);
+
+                if (key == 'q' || key == 'Q' || key == 27) {
+                    cout << "quit requested by user" << endl;
+                    cv::destroyAllWindows();
+                    return 0;
+                }
+
+                if (key == ' ') {
+                    paused = !paused;
+                    cout << (paused ? "paused" : "resumed") << endl;
+                    continue;
+                }
+
+                if (key == '+' || key == '=') {
+                    frame_delay_ms = max(1, frame_delay_ms - 10);
+                    cout << "frame delay: " << frame_delay_ms << " ms" << endl;
+                }
+
+                if (key == '-' || key == '_') {
+                    frame_delay_ms = min(500, frame_delay_ms + 10);
+                    cout << "frame delay: " << frame_delay_ms << " ms" << endl;
+                }
+
+                if (!paused) {
+                    break;
+                }
+            }
 
             continue;
         }
@@ -1527,6 +1621,36 @@ int main(int argc, char **argv) {
             draw_trajectory_and_map(map_data);
             pangolin::FinishFrame();
 
+            while (true) {
+                int key = cv::waitKey(paused ? 0 : frame_delay_ms);
+
+                if (key == 'q' || key == 'Q' || key == 27) {
+                    cout << "quit requested by user" << endl;
+                    cv::destroyAllWindows();
+                    return 0;
+                }
+
+                if (key == ' ') {
+                    paused = !paused;
+                    cout << (paused ? "paused" : "resumed") << endl;
+                    continue;
+                }
+
+                if (key == '+' || key == '=') {
+                    frame_delay_ms = max(1, frame_delay_ms - 10);
+                    cout << "frame delay: " << frame_delay_ms << " ms" << endl;
+                }
+
+                if (key == '-' || key == '_') {
+                    frame_delay_ms = min(500, frame_delay_ms + 10);
+                    cout << "frame delay: " << frame_delay_ms << " ms" << endl;
+                }
+
+                if (!paused) {
+                    break;
+                }
+            }
+
             continue;
         }
 
@@ -1562,6 +1686,36 @@ int main(int argc, char **argv) {
             display.Activate(camera_render_state);
             draw_trajectory_and_map(map_data);
             pangolin::FinishFrame();
+
+            while (true) {
+                int key = cv::waitKey(paused ? 0 : frame_delay_ms);
+
+                if (key == 'q' || key == 'Q' || key == 27) {
+                    cout << "quit requested by user" << endl;
+                    cv::destroyAllWindows();
+                    return 0;
+                }
+
+                if (key == ' ') {
+                    paused = !paused;
+                    cout << (paused ? "paused" : "resumed") << endl;
+                    continue;
+                }
+
+                if (key == '+' || key == '=') {
+                    frame_delay_ms = max(1, frame_delay_ms - 10);
+                    cout << "frame delay: " << frame_delay_ms << " ms" << endl;
+                }
+
+                if (key == '-' || key == '_') {
+                    frame_delay_ms = min(500, frame_delay_ms + 10);
+                    cout << "frame delay: " << frame_delay_ms << " ms" << endl;
+                }
+
+                if (!paused) {
+                    break;
+                }
+            }
 
             continue;
         }
@@ -1648,6 +1802,36 @@ int main(int argc, char **argv) {
         draw_trajectory_and_map(map_data);
         pangolin::FinishFrame();
 
+        while (true) {
+            int key = cv::waitKey(paused ? 0 : frame_delay_ms);
+
+            if (key == 'q' || key == 'Q' || key == 27) {
+                cout << "quit requested by user" << endl;
+                cv::destroyAllWindows();
+                return 0;
+            }
+
+            if (key == ' ') {
+                paused = !paused;
+                cout << (paused ? "paused" : "resumed") << endl;
+                continue;
+            }
+
+            if (key == '+' || key == '=') {
+                frame_delay_ms = max(1, frame_delay_ms - 10);
+                cout << "frame delay: " << frame_delay_ms << " ms" << endl;
+            }
+
+            if (key == '-' || key == '_') {
+                frame_delay_ms = min(500, frame_delay_ms + 10);
+                cout << "frame delay: " << frame_delay_ms << " ms" << endl;
+            }
+
+            if (!paused) {
+                break;
+            }
+        }
+
         cout
                 << "frame " << frame_prev.id << " -> " << frame_curr.id
                 << " | accepted: " << (diag.accepted ? 1 : 0)
@@ -1691,5 +1875,19 @@ int main(int argc, char **argv) {
 
     save_top_down_map_image(map_data, "top_down_map.png");
 
+    cout << "press any key in the OpenCV window to exit" << endl;
+    while (!pangolin::ShouldQuit()) {
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+        display.Activate(camera_render_state);
+        draw_trajectory_and_map(map_data);
+        pangolin::FinishFrame();
+
+        int key = cv::waitKey(30);
+        if (key >= 0) {
+            break;
+        }
+    }
+
+    cv::destroyAllWindows();
     return 0;
 }
