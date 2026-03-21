@@ -4,9 +4,8 @@
 #include <iostream>
 #include <iomanip>
 
-// ---------------------------------------------------------------------------
+
 // Helpers
-// ---------------------------------------------------------------------------
 
 static double median_of_vector(std::vector<double> v, double fallback) {
     if (v.empty()) return fallback;
@@ -15,9 +14,7 @@ static double median_of_vector(std::vector<double> v, double fallback) {
     return (n % 2 == 1) ? v[n / 2] : 0.5 * (v[n / 2 - 1] + v[n / 2]);
 }
 
-// ---------------------------------------------------------------------------
 // Motion statistics
-// ---------------------------------------------------------------------------
 
 AcceptedMotionStats compute_recent_motion_stats(
     const std::deque<StepDiagnostics>& recent)
@@ -35,9 +32,7 @@ AcceptedMotionStats compute_recent_motion_stats(
     return stats;
 }
 
-// ---------------------------------------------------------------------------
 // Acceptance evaluation
-// ---------------------------------------------------------------------------
 
 bool evaluate_motion_acceptance(
     StepDiagnostics& diag,
@@ -103,9 +98,7 @@ bool evaluate_motion_acceptance(
     return true;
 }
 
-// ---------------------------------------------------------------------------
 // CSV output
-// ---------------------------------------------------------------------------
 
 void write_csv_header(std::ofstream& f) {
     f << "prev_frame,curr_frame,accepted,reason,pose_source,recovery_mode,"
