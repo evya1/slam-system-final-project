@@ -6,9 +6,7 @@
 #include <limits>
 #include <algorithm>
 
-// ---------------------------------------------------------------------------
-// Construction / Pangolin setup
-// ---------------------------------------------------------------------------
+// Construction / Pangolin + OpenCV window setup
 
 Viewer::Viewer(int width, int height)
     : width_(width), height_(height)
@@ -26,15 +24,23 @@ Viewer::Viewer(int width, int height)
                    -static_cast<float>(width_) / static_cast<float>(height_))
         .SetHandler(new pangolin::Handler3D(camera_render_state_));
 
-    cv::namedWindow("SLAM: Keypoints", cv::WINDOW_NORMAL);
-    cv::resizeWindow("SLAM: Keypoints", 960, 540);
-    cv::moveWindow("SLAM: Keypoints", 50, 500);
+    // OpenCV display windows
+    cv::namedWindow("SLAM: Keypoints",        cv::WINDOW_NORMAL);
+    cv::namedWindow("SLAM: Matches (raw)",    cv::WINDOW_NORMAL);
+    cv::namedWindow("SLAM: Matches (inlier)", cv::WINDOW_NORMAL);
+
+    cv::resizeWindow("SLAM: Keypoints",        960, 540);
+    cv::resizeWindow("SLAM: Matches (raw)",    960, 270);
+    cv::resizeWindow("SLAM: Matches (inlier)", 960, 270);
+
+    cv::moveWindow("SLAM: Keypoints",        50,  750);
+    cv::moveWindow("SLAM: Matches (raw)",    50,  500);
+    cv::moveWindow("SLAM: Matches (inlier)", 50,  230);
+
     cv::waitKey(1);
 }
 
-// ---------------------------------------------------------------------------
 // Render (called once per frame)
-// ---------------------------------------------------------------------------
 
 void Viewer::render(const SlamMap& map) {
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
@@ -46,17 +52,41 @@ void Viewer::render(const SlamMap& map) {
 void Viewer::show_keypoints(const Frame& frame, bool accepted) const {
     const std::string text =
         "frame: " + std::to_string(frame.id) +
-        "  keypoints: " + std::to_string(frame.keypoints.size());
+        "  kp: " + std::to_string(frame.keypoints.size()) +
+        (frame.is_keyframe ? "  [KF]" : "");
     cv::Mat img = draw_keypoints_image(frame, text, accepted);
     cv::imshow("SLAM: Keypoints", img);
 }
 
-// ---------------------------------------------------------------------------
+void Viewer::show_matches(
+    const Frame&                   prev,
+    const Frame&                   curr,
+    const std::vector<cv::DMatch>& raw_matches,
+    const std::vector<cv::DMatch>& filtered_matches) const
+{
+    // Raw matches window
+    {
+        const std::string text =
+            "raw matches: " + std::to_string(raw_matches.size()) +
+            "  " + std::to_string(prev.id) + " -> " + std::to_string(curr.id);
+        cv::Mat img = draw_matches_image(prev, curr, raw_matches, text);
+        cv::imshow("SLAM: Matches (raw)", img);
+    }
+
+    // Filtered / inlier matches window
+    {
+        const std::string text =
+            "inlier matches: " + std::to_string(filtered_matches.size()) +
+            "  " + std::to_string(prev.id) + " -> " + std::to_string(curr.id);
+        cv::Mat img = draw_matches_image(prev, curr, filtered_matches, text);
+        cv::imshow("SLAM: Matches (inlier)", img);
+    }
+}
+
 // Static OpenGL drawing
-// ---------------------------------------------------------------------------
 
 void Viewer::draw_trajectory_and_map_gl(const SlamMap& map) {
-    // Map points
+    // Map points (white dots)
     glPointSize(2.0f);
     glBegin(GL_POINTS);
     glColor3f(1.0f, 1.0f, 1.0f);
@@ -66,7 +96,7 @@ void Viewer::draw_trajectory_and_map_gl(const SlamMap& map) {
     }
     glEnd();
 
-    // Trajectory line
+    // Trajectory line (red)
     glLineWidth(2.0f);
     glBegin(GL_LINE_STRIP);
     glColor3f(1.0f, 0.0f, 0.0f);
@@ -76,24 +106,27 @@ void Viewer::draw_trajectory_and_map_gl(const SlamMap& map) {
     }
     glEnd();
 
-    // Per-frame axes
+    // Per-frame axes (small) — keyframes drawn larger and in a different colour
     for (const Frame& f : map.frames()) {
         glPushMatrix();
         Eigen::Matrix4d T = f.pose.matrix();
         glMultMatrixd(T.data());
-        pangolin::glDrawAxis(0.1);
+        if (f.is_keyframe) {
+            glColor3f(0.0f, 1.0f, 0.5f);  // green-teal for keyframes
+            pangolin::glDrawAxis(0.2);
+        } else {
+            pangolin::glDrawAxis(0.05);
+        }
         glPopMatrix();
     }
 }
 
-// ---------------------------------------------------------------------------
 // Static image helpers
-// ---------------------------------------------------------------------------
 
 cv::Mat Viewer::draw_keypoints_image(
-    const Frame& frame,
+    const Frame&       frame,
     const std::string& overlay_text,
-    bool accepted)
+    bool               accepted)
 {
     cv::Mat out;
     cv::Scalar colour = accepted ? cv::Scalar(0, 255, 0) : cv::Scalar(0, 0, 255);
@@ -105,23 +138,28 @@ cv::Mat Viewer::draw_keypoints_image(
 }
 
 cv::Mat Viewer::draw_matches_image(
-    const Frame& prev,
-    const Frame& curr,
+    const Frame&                   prev,
+    const Frame&                   curr,
     const std::vector<cv::DMatch>& matches,
-    const std::string& overlay_text)
+    const std::string&             overlay_text)
 {
     cv::Mat out;
     cv::drawMatches(prev.image_bgr, prev.keypoints,
                     curr.image_bgr, curr.keypoints,
-                    matches, out);
-    cv::putText(out, overlay_text,
-                cv::Point(20, 35), cv::FONT_HERSHEY_SIMPLEX, 0.8,
-                cv::Scalar(0, 255, 0), 2);
+                    matches, out,
+                    cv::Scalar::all(-1), cv::Scalar::all(-1),
+                    std::vector<char>(),
+                    cv::DrawMatchesFlags::NOT_DRAW_SINGLE_POINTS);
+    if (!out.empty()) {
+        cv::putText(out, overlay_text,
+                    cv::Point(20, 35), cv::FONT_HERSHEY_SIMPLEX, 0.7,
+                    cv::Scalar(0, 255, 0), 2);
+    }
     return out;
 }
 
 void Viewer::save_top_down_map_image(
-    const SlamMap& map,
+    const SlamMap&     map,
     const std::string& output_path,
     int image_width,
     int image_height,
@@ -132,7 +170,6 @@ void Viewer::save_top_down_map_image(
         return;
     }
 
-    // Collect all XZ points
     std::vector<Eigen::Vector2d> all_xz;
     all_xz.reserve(map.map_point_count() + map.frame_count());
 
@@ -184,7 +221,7 @@ void Viewer::save_top_down_map_image(
             img.at<cv::Vec3b>(px.y, px.x) = cv::Vec3b(255, 255, 255);
     }
 
-    // Trajectory
+    // Trajectory (blue line, red dots, keyframes in green)
     const auto& frames = map.frames();
     for (size_t i = 1; i < frames.size(); ++i) {
         const auto& a = frames[i - 1].pose.translation_vector;
@@ -195,21 +232,29 @@ void Viewer::save_top_down_map_image(
     }
     for (const Frame& f : frames) {
         if (!f.pose.translation_vector.allFinite()) continue;
-        cv::circle(img, to_pixel(f.pose.translation_vector.x(),
-                                  f.pose.translation_vector.z()),
-                   2, cv::Scalar(255, 0, 0), -1);
+        auto px = to_pixel(f.pose.translation_vector.x(),
+                           f.pose.translation_vector.z());
+        if (f.is_keyframe)
+            cv::circle(img, px, 4, cv::Scalar(0, 200, 100), -1);  // keyframe: teal
+        else
+            cv::circle(img, px, 2, cv::Scalar(255, 100, 100), -1);
+    }
+    // Mark start and end
+    if (!frames.empty() && frames.front().pose.translation_vector.allFinite()) {
+        const auto& t = frames.front().pose.translation_vector;
+        cv::circle(img, to_pixel(t.x(), t.z()), 8, cv::Scalar(0, 255, 255), 2);  // start: cyan
     }
     if (!frames.empty() && frames.back().pose.translation_vector.allFinite()) {
         const auto& t = frames.back().pose.translation_vector;
-        cv::circle(img, to_pixel(t.x(), t.z()), 6, cv::Scalar(0, 255, 0), -1);
+        cv::circle(img, to_pixel(t.x(), t.z()), 8, cv::Scalar(0, 255, 0), -1);   // end: green
     }
 
-    cv::putText(img, "Top-down map view (X-Z plane)",
-                cv::Point(20, 35), cv::FONT_HERSHEY_SIMPLEX, 0.8,
+    cv::putText(img, "Top-down map  (X-Z plane)  white=pts  blue=traj  teal=KF",
+                cv::Point(20, 35), cv::FONT_HERSHEY_SIMPLEX, 0.65,
                 cv::Scalar(0, 255, 255), 2);
 
     if (cv::imwrite(output_path, img))
-        std::cout << "saved top-down map image to: " << output_path << "\n";
+        std::cout << "saved top-down map: " << output_path << "\n";
     else
-        std::cerr << "failed to save top-down map image to: " << output_path << "\n";
+        std::cerr << "failed to save top-down map: " << output_path << "\n";
 }

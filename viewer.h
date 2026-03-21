@@ -13,7 +13,7 @@
 // Wraps the Pangolin 3D viewer and OpenCV 2D windows.
 class Viewer {
 public:
-    Viewer(int width = 1280, int height = 720);
+    explicit Viewer(int width = 1280, int height = 720);
 
     // Draw the current map and trajectory in the Pangolin window.
     void render(const SlamMap& map);
@@ -21,25 +21,32 @@ public:
     // Return true if the user has closed the Pangolin window.
     bool should_quit() const { return pangolin::ShouldQuit(); }
 
-    // Process one key event (non-blocking if delay_ms > 0).
-    // Returns the key code, or -1 if nothing was pressed.
+    // Non-blocking key poll (OpenCV side).
     int wait_key(int delay_ms) const { return cv::waitKey(delay_ms); }
 
-    // Show a frame's keypoints in the OpenCV window.
+    // Show keypoints in its own window.
     void show_keypoints(const Frame& frame, bool accepted) const;
+
+    // Show raw and filtered match windows.
+    // Pass empty vectors if one type is not available yet.
+    void show_matches(
+        const Frame&                   prev,
+        const Frame&                   curr,
+        const std::vector<cv::DMatch>& raw_matches,
+        const std::vector<cv::DMatch>& filtered_matches) const;
 
     // --- Static image helpers (return cv::Mat, do not display) ---
 
     static cv::Mat draw_keypoints_image(
-        const Frame& frame,
+        const Frame&       frame,
         const std::string& overlay_text,
-        bool accepted);
+        bool               accepted);
 
     static cv::Mat draw_matches_image(
-        const Frame& prev,
-        const Frame& curr,
+        const Frame&                   prev,
+        const Frame&                   curr,
         const std::vector<cv::DMatch>& matches,
-        const std::string& overlay_text);
+        const std::string&             overlay_text);
 
     // Save a top-down (X-Z plane) projection of the map as a PNG.
     static void save_top_down_map_image(

@@ -4,24 +4,36 @@
 #include "slam_map.h"
 #include "diagnostics.h"
 #include "feature_matcher.h"
+#include "keyframe_db.h"
 
 #include <opencv2/features2d.hpp>
 #include <deque>
 
+// Forward declaration — include viewer.h only in frontend.cpp
+class Viewer;
+
 // Monocular visual-odometry frontend.
 //
 // Processing pipeline per frame pair:
-//   1. Feature matching (ORB + BF + Lowe)
-//   2. Essential-matrix estimation → epipolar inliers
-//   3. Relative pose recovery from E
-//   4. Motion-bounds acceptance check
-//   5. Triangulation of epipolar inliers → new MapPoints with observations
-//   6. PnP relocalization using existing map-point observations (optional)
-//   7. Diagnostics collection
+//   1. Feature matching (ORB + BF + Lowe) — raw and filtered
+//   2. Show raw and filtered match visualisation
+//   3. Essential-matrix estimation (RANSAC)
+//   4. Epipolar error before/after geometry
+//   5. Relative pose recovery from E (recoverPose convention: X_2 = R_21 X_1 + t_21)
+//   6. Motion-bounds acceptance check
+//   7. Compose absolute trajectory via Pose::from_relative
+//   8. Triangulate epipolar inliers → new MapPoints with observations
+//   9. Keyframe selection and KeyframeDB update
+//  10. Periodic PnP relocalization against global map (every kPnpPeriod accepted frames)
+//      — object points are in WORLD frame → use Pose::from_world_to_camera_cv
+//      — optimize with LM
+//  11. Loop-closure attempt on keyframes
+//  12. Diagnostics collection
 class Frontend {
 public:
-    // K — 3×3 camera intrinsic matrix, kept for the lifetime of the frontend.
-    explicit Frontend(cv::Mat K, int orb_features = 3000);
+    // K            — 3×3 camera intrinsic matrix.
+    // viewer       — optional pointer for live match visualisation (may be nullptr).
+    explicit Frontend(cv::Mat K, int orb_features = 3000, Viewer* viewer = nullptr);
 
     // Extract ORB features into a frame (populates keypoints + descriptors).
     bool extract_features(Frame& frame) const;
@@ -33,23 +45,44 @@ public:
     StepDiagnostics process(Frame& prev_frame, Frame& curr_frame, SlamMap& map);
 
 private:
-    // Attempt PnP relocalization from existing map points observed in prev_frame.
-    // Returns number of PnP inliers (0 if not run or failed).
-    // On success, updates curr_frame.pose.
-    int try_pnp_relocalizer(
-        const Frame&    prev_frame,
-        Frame&          curr_frame,
-        const MatchInfo& match,
-        const SlamMap&  map,
-        StepDiagnostics& diag);
+    // Attempt periodic PnP relocalization against the global map.
+    // Uses world-frame map points → calls Pose::from_world_to_camera_cv.
+    // Runs the LM optimizer on the PnP result.
+    // On success, may update curr_frame.pose.
+    void try_periodic_pnp(Frame& curr_frame, SlamMap& map, StepDiagnostics& diag);
+
+    // Decide whether curr_frame should be a keyframe.
+    bool should_be_keyframe(const Frame& prev_keyframe, const Frame& curr_frame,
+                             const StepDiagnostics& diag) const;
+
+    // Register curr_frame as a keyframe and (optionally) attempt loop closure.
+    void register_keyframe(Frame& curr_frame, int frame_idx,
+                            SlamMap& map, StepDiagnostics& diag);
 
     cv::Ptr<cv::ORB> orb_;
     cv::Mat          K_;
+    Viewer*          viewer_ = nullptr;
+
+    // Keyframe tracking
+    KeyframeDB kf_db_;
+    int  last_kf_frame_idx_  = -1;  // SlamMap index of the most recent keyframe
+    int  accepted_since_kf_  = 0;   // accepted frames since last keyframe
 
     // Tracking state
+    int  accepted_total_       = 0;
     int  consecutive_rejects_  = 0;
     int  last_accepted_frame_  = -1;
     std::deque<StepDiagnostics> recent_accepted_steps_;
-    static constexpr int kRecentWindowSize = 25;
+
+    // How often to run periodic PnP (in accepted frames between runs)
+    static constexpr int kPnpPeriod         = 10;
+    // Minimum keyframes before looking for loop candidates
+    static constexpr int kLoopMinKeyframes  = 5;
+    // Max accepted frames between keyframes (forces keyframe creation)
+    static constexpr int kMaxAcceptedPerKf  = 5;
+    // Minimum rotation change for a new keyframe (degrees)
+    static constexpr double kKfMinRotDeg    = 3.0;
+    // Recovery mode threshold
+    static constexpr int kRecentWindowSize  = 25;
     static constexpr int kRecoveryThreshold = 8;
 };

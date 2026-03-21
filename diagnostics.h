@@ -15,19 +15,38 @@ struct StepDiagnostics {
     int good_matches = 0;
 
     // Epipolar geometry (primary backbone)
-    int    epipolar_inliers = 0;   // inliers to E-matrix RANSAC
-    double inlier_ratio     = -1.0; // epipolar_inliers / good_matches
-    double epi_error        = -1.0; // mean epipolar error (pixels)
+    int    epipolar_inliers = 0;
+    double inlier_ratio     = -1.0;
+    double epi_error        = -1.0;  // mean epipolar error (pixels)
 
     // Triangulation
     int triangulated_points = 0;
 
-    // PnP relocalization (optional, from existing map)
-    int    pnp_correspondences = 0;  // 3D-2D pairs available
+    // Periodic PnP relocalization
+    int    pnp_correspondences = 0;
     int    pnp_inliers         = 0;
     double reproj_error        = -1.0;
+    bool   pnp_periodic_ran    = false;
+    // "world" = object points in world frame (correct, absolute pose result)
+    // "none"  = PnP not run
+    std::string pnp_point_frame = "none";
 
-    // Step motion (rotation from recoverPose, translation norm always 1 in mono)
+    // Pose-only LM optimization
+    bool   optimizer_ran       = false;
+    double reproj_before_optim = -1.0;
+    double reproj_after_optim  = -1.0;
+
+    // Loop closure
+    bool loop_candidate_found    = false;
+    bool loop_verified           = false;
+    bool loop_correction_applied = false;
+    int  loop_matched_frame_id   = -1;
+
+    // Keyframe
+    bool is_keyframe  = false;
+    int  num_keyframes = 0;
+
+    // Step motion
     double step_t_norm = -1.0;
     double step_r_deg  = -1.0;
 
@@ -38,27 +57,23 @@ struct StepDiagnostics {
 
     bool        recovery_mode = false;
     bool        accepted      = false;
-    std::string pose_source   = "none";   // "epipolar", "pnp", "none"
+    std::string pose_source   = "none";  // "epipolar", "pnp", "none"
     std::string reason        = "unknown";
 };
 
-// Rolling statistics over recently accepted steps (used for motion outlier detection).
+// Rolling statistics over recently accepted steps.
 struct AcceptedMotionStats {
     double median_step_t     = 0.02;
     double median_step_r_deg = 1.0;
 };
 
-// Compute median-based motion statistics from the recent accepted window.
 AcceptedMotionStats compute_recent_motion_stats(
     const std::deque<StepDiagnostics>& recent_accepted_steps);
 
-// Evaluate whether the step should be accepted based on motion bounds.
-// Populates the acceptance-related fields in diag and returns accepted flag.
 bool evaluate_motion_acceptance(
     StepDiagnostics& diag,
     const AcceptedMotionStats& recent_stats);
 
-// --- CSV / log output ---
 
 void write_csv_header(std::ofstream& f);
 void write_csv_row(std::ofstream& f, const StepDiagnostics& d);

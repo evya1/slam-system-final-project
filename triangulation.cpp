@@ -1,25 +1,35 @@
 #include "triangulation.h"
 
 #include <opencv2/calib3d.hpp>
+#include <cmath>
 
-// Build a 3×4 projection matrix P = K * [R_cw | t_cw]
-// where R_cw = R_wc^T  and  t_cw = -R_wc^T * t_wc
+// Projection matrix P = K * [R_cw | t_cw]
+// Delegates to Pose::projection_matrix() which encapsulates the conversion.
 static cv::Mat make_projection_matrix(const Pose& pose, const cv::Mat& K) {
-    // Camera-from-world rotation and translation
-    Eigen::Matrix3d R_cw = pose.rotation_matrix.transpose();
-    Eigen::Vector3d t_cw = -(R_cw * pose.translation_vector);
-
-    cv::Mat Rt(3, 4, CV_64F);
-    for (int r = 0; r < 3; ++r) {
-        for (int c = 0; c < 3; ++c)
-            Rt.at<double>(r, c) = R_cw(r, c);
-        Rt.at<double>(r, 3) = t_cw(r);
-    }
-
-    cv::Mat P;
-    K.convertTo(P, CV_64F);
-    return P * Rt;
+    return pose.projection_matrix(K);
 }
+
+// Parallax angle (degrees) between two bearing vectors in the world frame.
+// A low parallax means the two cameras are almost collinear with the point —
+// triangulation is ill-conditioned in that case.
+static double parallax_deg(
+    const Eigen::Vector3d& p_world,
+    const Pose& pose1,
+    const Pose& pose2)
+{
+    // Camera centres in world frame (= translation vectors for T_wc)
+    const Eigen::Vector3d& c1 = pose1.translation_vector;
+    const Eigen::Vector3d& c2 = pose2.translation_vector;
+
+    Eigen::Vector3d ray1 = (p_world - c1).normalized();
+    Eigen::Vector3d ray2 = (p_world - c2).normalized();
+
+    double cos_angle = ray1.dot(ray2);
+    cos_angle = std::max(-1.0, std::min(1.0, cos_angle));
+    return std::acos(cos_angle) * (180.0 / M_PI);
+}
+
+// Main triangulation
 
 TriangulationResult triangulate_points(
     const std::vector<cv::Point2f>& pts1,
@@ -28,7 +38,8 @@ TriangulationResult triangulate_points(
     const Pose& pose2,
     const cv::Mat& K,
     double min_depth,
-    double max_depth)
+    double max_depth,
+    double min_parallax_deg)
 {
     TriangulationResult result;
     const int n = static_cast<int>(pts1.size());
@@ -40,33 +51,42 @@ TriangulationResult triangulate_points(
     cv::Mat P1 = make_projection_matrix(pose1, K);
     cv::Mat P2 = make_projection_matrix(pose2, K);
 
-    cv::Mat points4d;
-    cv::triangulatePoints(P1, P2, pts1, pts2, points4d);  // 4×N
+    // triangulatePoints always outputs CV_32F in all OpenCV versions we care
+    // about, regardless of the input precision.  Convert explicitly to CV_64F
+    // so all subsequent arithmetic uses double.
+    cv::Mat points4d_f;
+    cv::triangulatePoints(P1, P2, pts1, pts2, points4d_f);
 
-    // Camera-from-world transforms for cheirality check
-    Eigen::Matrix3d R1_cw = pose1.rotation_matrix.transpose();
-    Eigen::Vector3d t1_cw = -(R1_cw * pose1.translation_vector);
-    Eigen::Matrix3d R2_cw = pose2.rotation_matrix.transpose();
-    Eigen::Vector3d t2_cw = -(R2_cw * pose2.translation_vector);
+    cv::Mat points4d;
+    points4d_f.convertTo(points4d, CV_64F);   // 4×N  CV_64F
+
+    // World-to-camera transforms for cheirality check
+    Eigen::Matrix3d R1_cw = pose1.R_cw();
+    Eigen::Vector3d t1_cw = pose1.t_cw();
+    Eigen::Matrix3d R2_cw = pose2.R_cw();
+    Eigen::Vector3d t2_cw = pose2.t_cw();
 
     for (int i = 0; i < n; ++i) {
-        double w = points4d.at<float>(3, i);
+        double w = points4d.at<double>(3, i);
         if (std::fabs(w) < 1e-9) continue;
 
         Eigen::Vector3d p_world(
-            points4d.at<float>(0, i) / w,
-            points4d.at<float>(1, i) / w,
-            points4d.at<float>(2, i) / w);
+            points4d.at<double>(0, i) / w,
+            points4d.at<double>(1, i) / w,
+            points4d.at<double>(2, i) / w);
 
+        // Finite coordinate check
         if (!p_world.allFinite()) continue;
 
-        // Depth in camera 1
+        // Depth in camera 1 and camera 2 (z-component in camera frame)
         double z1 = (R1_cw * p_world + t1_cw).z();
-        // Depth in camera 2
         double z2 = (R2_cw * p_world + t2_cw).z();
 
         if (z1 < min_depth || z1 > max_depth) continue;
         if (z2 < min_depth || z2 > max_depth) continue;
+
+        // Parallax check — reject near-degenerate triangulation
+        if (parallax_deg(p_world, pose1, pose2) < min_parallax_deg) continue;
 
         result.points_3d[i] = p_world;
         result.valid[i]     = true;

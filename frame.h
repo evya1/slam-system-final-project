@@ -9,8 +9,6 @@
 #include <vector>
 
 // Monocular RGB frame.
-// Depth-related fields have been removed; this struct represents a single
-// camera image with its extracted features and estimated pose.
 struct Frame {
     int    id        = -1;
     double timestamp = 0.0;
@@ -23,5 +21,12 @@ struct Frame {
     cv::Mat                   descriptors;
 
     Pose pose;
-    bool processed = false;
+    bool processed   = false;
+
+    // Keyframe flag.  Set by the frontend when this frame is selected as a
+    // keyframe (sufficient baseline / motion since the previous keyframe).
+    bool is_keyframe    = false;
+
+    // Index of this frame's entry in KeyframeDB (-1 if not a keyframe).
+    int  keyframe_db_idx = -1;
 };

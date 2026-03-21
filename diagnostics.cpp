@@ -4,8 +4,7 @@
 #include <iostream>
 #include <iomanip>
 
-
-// Helpers
+// Motion statistics
 
 static double median_of_vector(std::vector<double> v, double fallback) {
     if (v.empty()) return fallback;
@@ -13,8 +12,6 @@ static double median_of_vector(std::vector<double> v, double fallback) {
     size_t n = v.size();
     return (n % 2 == 1) ? v[n / 2] : 0.5 * (v[n / 2 - 1] + v[n / 2]);
 }
-
-// Motion statistics
 
 AcceptedMotionStats compute_recent_motion_stats(
     const std::deque<StepDiagnostics>& recent)
@@ -40,7 +37,6 @@ bool evaluate_motion_acceptance(
 {
     const bool recovery = diag.recovery_mode;
 
-    // Epipolar inlier count
     const int min_inliers = recovery ? 10 : 15;
     if (diag.epipolar_inliers < min_inliers) {
         diag.accepted = false;
@@ -48,7 +44,6 @@ bool evaluate_motion_acceptance(
         return false;
     }
 
-    // Inlier ratio
     const double min_ratio = recovery ? 0.25 : 0.35;
     if (diag.inlier_ratio >= 0.0 && diag.inlier_ratio < min_ratio) {
         diag.accepted = false;
@@ -56,7 +51,6 @@ bool evaluate_motion_acceptance(
         return false;
     }
 
-    // Epipolar error
     const double max_epi = recovery ? 3.0 : 2.5;
     if (diag.epi_error > max_epi) {
         diag.accepted = false;
@@ -64,7 +58,6 @@ bool evaluate_motion_acceptance(
         return false;
     }
 
-    // Hard rotation limit
     if (diag.step_r_deg > 120.0) {
         diag.accepted = false;
         diag.reason   = "reject_near_flip_rotation";
@@ -77,7 +70,6 @@ bool evaluate_motion_acceptance(
             diag.reason   = "reject_large_rotation_step";
             return false;
         }
-        // Cooldown (3+ consecutive rejects): even stricter
         if (diag.consecutive_reject_count >= 3) {
             if (diag.step_r_deg > std::max(4.0, 4.0 * recent_stats.median_step_r_deg + 1.0)) {
                 diag.accepted = false;
@@ -103,7 +95,11 @@ bool evaluate_motion_acceptance(
 void write_csv_header(std::ofstream& f) {
     f << "prev_frame,curr_frame,accepted,reason,pose_source,recovery_mode,"
       << "raw_matches,good_matches,epipolar_inliers,inlier_ratio,epi_error,"
-      << "triangulated_points,pnp_correspondences,pnp_inliers,reproj_error,"
+      << "triangulated_points,"
+      << "pnp_correspondences,pnp_inliers,reproj_error,pnp_periodic_ran,pnp_point_frame,"
+      << "optimizer_ran,reproj_before_optim,reproj_after_optim,"
+      << "loop_candidate_found,loop_verified,loop_correction_applied,loop_matched_frame_id,"
+      << "is_keyframe,num_keyframes,"
       << "step_t_norm,step_r_deg,"
       << "consecutive_reject_count,last_accepted_frame,frames_since_last_accept"
       << "\n";
@@ -125,6 +121,17 @@ void write_csv_row(std::ofstream& f, const StepDiagnostics& d) {
       << d.pnp_correspondences      << ","
       << d.pnp_inliers              << ","
       << d.reproj_error             << ","
+      << (d.pnp_periodic_ran ? 1 : 0) << ","
+      << d.pnp_point_frame          << ","
+      << (d.optimizer_ran ? 1 : 0)  << ","
+      << d.reproj_before_optim      << ","
+      << d.reproj_after_optim       << ","
+      << (d.loop_candidate_found ? 1 : 0) << ","
+      << (d.loop_verified ? 1 : 0)        << ","
+      << (d.loop_correction_applied ? 1 : 0) << ","
+      << d.loop_matched_frame_id    << ","
+      << (d.is_keyframe ? 1 : 0)    << ","
+      << d.num_keyframes            << ","
       << d.step_t_norm              << ","
       << d.step_r_deg               << ","
       << d.consecutive_reject_count << ","
@@ -132,6 +139,8 @@ void write_csv_row(std::ofstream& f, const StepDiagnostics& d) {
       << d.frames_since_last_accept
       << "\n";
 }
+
+// Summary / jump candidates
 
 void write_summary_file(
     const std::string& path,
@@ -146,6 +155,9 @@ void write_summary_file(
     }
 
     int accepted = 0, rejected = 0, recovery_accepted = 0, max_consec = 0;
+    int optim_ran = 0, pnp_ran = 0, loop_verified = 0, loop_corrected = 0;
+    int keyframes = 0;
+
     for (const auto& s : all_steps) {
         if (s.accepted) {
             ++accepted;
@@ -154,16 +166,26 @@ void write_summary_file(
             ++rejected;
         }
         max_consec = std::max(max_consec, s.consecutive_reject_count);
+        if (s.optimizer_ran)            ++optim_ran;
+        if (s.pnp_periodic_ran)         ++pnp_ran;
+        if (s.loop_verified)            ++loop_verified;
+        if (s.loop_correction_applied)  ++loop_corrected;
+        if (s.is_keyframe)              ++keyframes;
     }
 
     f << std::fixed << std::setprecision(4);
-    f << "frames_loaded: "          << total_frames      << "\n";
-    f << "rows: "                   << all_steps.size()  << "\n";
-    f << "accepted: "               << accepted          << "\n";
-    f << "rejected: "               << rejected          << "\n";
-    f << "recovery_accepted: "      << recovery_accepted << "\n";
-    f << "max_consecutive_rejects: "<< max_consec        << "\n";
-    f << "map_points: "             << total_map_points  << "\n";
+    f << "frames_loaded: "              << total_frames      << "\n";
+    f << "rows: "                       << all_steps.size()  << "\n";
+    f << "accepted: "                   << accepted          << "\n";
+    f << "rejected: "                   << rejected          << "\n";
+    f << "recovery_accepted: "          << recovery_accepted << "\n";
+    f << "max_consecutive_rejects: "    << max_consec        << "\n";
+    f << "map_points: "                 << total_map_points  << "\n";
+    f << "keyframes: "                  << keyframes         << "\n";
+    f << "optimizer_ran_count: "        << optim_ran         << "\n";
+    f << "pnp_periodic_ran_count: "     << pnp_ran           << "\n";
+    f << "loop_closures_verified: "     << loop_verified     << "\n";
+    f << "loop_closures_applied: "      << loop_corrected    << "\n";
 }
 
 void write_jump_candidates_file(
@@ -182,7 +204,8 @@ void write_jump_candidates_file(
             (!s.accepted) ||
             (s.step_r_deg > 10.0) ||
             (s.epi_error  > 2.0) ||
-            (s.frames_since_last_accept >= 8);
+            (s.frames_since_last_accept >= 8) ||
+            (s.loop_correction_applied);
         if (!suspicious) continue;
 
         f << "frame " << s.prev_frame_id << " -> " << s.curr_frame_id
@@ -200,6 +223,10 @@ void write_jump_candidates_file(
           << " | consec_rej="   << s.consecutive_reject_count
           << " | triangulated=" << s.triangulated_points
           << " | pnp_inliers="  << s.pnp_inliers
+          << " | optim="        << (s.optimizer_ran ? 1 : 0)
+          << " | reproj_before=" << s.reproj_before_optim
+          << " | reproj_after="  << s.reproj_after_optim
+          << " | loop_corrected=" << (s.loop_correction_applied ? 1 : 0)
           << "\n";
     }
 }

@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.16)
 
-project(slam_system VERSION 0.2.0 LANGUAGES CXX)
+project(slam_system VERSION 0.3.0 LANGUAGES CXX)
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
@@ -10,9 +10,7 @@ endif()
 
 option(SLAM_SYSTEM_ENABLE_WARNINGS "Enable common compiler warnings" ON)
 
-# ---------------------------------------------------------------------------
 # Source files
-# ---------------------------------------------------------------------------
 set(SLAM_SOURCES
     main.cpp
     slam_map.cpp
@@ -22,6 +20,8 @@ set(SLAM_SOURCES
     pnp_relocalizer.cpp
     diagnostics.cpp
     optimization.cpp
+    keyframe_db.cpp
+    loop_closure.cpp
     frontend.cpp
     viewer.cpp
 )
