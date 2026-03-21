@@ -13,7 +13,6 @@
 #include <string>
 #include <iomanip>
 #include <algorithm>
-#include <cmath>
 #include <limits>
 #include <deque>
 
@@ -805,6 +804,146 @@ static void draw_trajectory_and_map(const MapData &map_data) {
     }
 }
 
+static void save_top_down_map_image(
+    const MapData &map_data,
+    const string &output_path,
+    int image_width = 1400,
+    int image_height = 1400,
+    int margin = 40) {
+    if (map_data.frames.empty()) {
+        cerr << "cannot save top-down map image: no frames available" << endl;
+        return;
+    }
+
+    vector<Eigen::Vector2d> all_xz_points;
+    all_xz_points.reserve(map_data.points.size() + map_data.frames.size());
+
+    for (const auto &map_point: map_data.points) {
+        if (!map_point.valid || !map_point.point.allFinite()) {
+            continue;
+        }
+
+        all_xz_points.emplace_back(map_point.point.x(), map_point.point.z());
+    }
+
+    for (const auto &frame: map_data.frames) {
+        if (!frame.pose.translation_vector.allFinite()) {
+            continue;
+        }
+
+        all_xz_points.emplace_back(
+            frame.pose.translation_vector.x(),
+            frame.pose.translation_vector.z()
+        );
+    }
+
+    if (all_xz_points.empty()) {
+        cerr << "cannot save top-down map image: no valid XZ points available" << endl;
+        return;
+    }
+
+    double min_x = numeric_limits<double>::max();
+    double max_x = -numeric_limits<double>::max();
+    double min_z = numeric_limits<double>::max();
+    double max_z = -numeric_limits<double>::max();
+
+    for (const auto &p: all_xz_points) {
+        min_x = min(min_x, p.x());
+        max_x = max(max_x, p.x());
+        min_z = min(min_z, p.y());
+        max_z = max(max_z, p.y());
+    }
+
+    double range_x = max(max_x - min_x, 1e-6);
+    double range_z = max(max_z - min_z, 1e-6);
+
+    double scale_x = static_cast<double>(image_width - 2 * margin) / range_x;
+    double scale_z = static_cast<double>(image_height - 2 * margin) / range_z;
+    double scale = min(scale_x, scale_z);
+
+    auto world_xz_to_image = [&](double world_x, double world_z) -> cv::Point {
+        int px = static_cast<int>(margin + (world_x - min_x) * scale);
+        int py = static_cast<int>(image_height - margin - (world_z - min_z) * scale);
+        return cv::Point(px, py);
+    };
+
+    cv::Mat top_down_image(image_height, image_width, CV_8UC3, cv::Scalar(0, 0, 0));
+
+    for (const auto &map_point: map_data.points) {
+        if (!map_point.valid || !map_point.point.allFinite()) {
+            continue;
+        }
+
+        cv::Point pixel = world_xz_to_image(map_point.point.x(), map_point.point.z());
+
+        if (pixel.x >= 0 && pixel.x < image_width && pixel.y >= 0 && pixel.y < image_height) {
+            top_down_image.at<cv::Vec3b>(pixel.y, pixel.x) = cv::Vec3b(255, 255, 255);
+        }
+    }
+
+    for (size_t i = 1; i < map_data.frames.size(); ++i) {
+        const auto &prev_frame = map_data.frames[i - 1];
+        const auto &curr_frame = map_data.frames[i];
+
+        if (!prev_frame.pose.translation_vector.allFinite() || !curr_frame.pose.translation_vector.allFinite()) {
+            continue;
+        }
+
+        cv::Point p1 = world_xz_to_image(
+            prev_frame.pose.translation_vector.x(),
+            prev_frame.pose.translation_vector.z()
+        );
+
+        cv::Point p2 = world_xz_to_image(
+            curr_frame.pose.translation_vector.x(),
+            curr_frame.pose.translation_vector.z()
+        );
+
+        cv::line(top_down_image, p1, p2, cv::Scalar(0, 0, 255), 2);
+    }
+
+    for (const auto &frame: map_data.frames) {
+        if (!frame.pose.translation_vector.allFinite()) {
+            continue;
+        }
+
+        cv::Point p = world_xz_to_image(
+            frame.pose.translation_vector.x(),
+            frame.pose.translation_vector.z()
+        );
+
+        cv::circle(top_down_image, p, 2, cv::Scalar(255, 0, 0), -1);
+    }
+
+    const auto &last_frame = map_data.frames.back();
+    if (last_frame.pose.translation_vector.allFinite()) {
+        cv::Point last_p = world_xz_to_image(
+            last_frame.pose.translation_vector.x(),
+            last_frame.pose.translation_vector.z()
+        );
+
+        cv::circle(top_down_image, last_p, 6, cv::Scalar(0, 255, 0), -1);
+    }
+
+    cv::putText(
+        top_down_image,
+        "Top-down map view (X-Z plane)",
+        cv::Point(20, 35),
+        cv::FONT_HERSHEY_SIMPLEX,
+        0.8,
+        cv::Scalar(0, 255, 255),
+        2
+    );
+
+    bool ok = cv::imwrite(output_path, top_down_image);
+    if (ok) {
+        cout << "saved top-down map image to: " << output_path << endl;
+    } else {
+        cerr << "failed to save top-down map image to: " << output_path << endl;
+    }
+}
+
+
 static double compute_rotation_angle_deg_from_rvec(const cv::Mat &rvec) {
     if (rvec.empty()) {
         return -1.0;
@@ -1221,6 +1360,7 @@ int main(int argc, char **argv) {
 
     pangolin::CreateWindowAndBind("trajectory_and_map", 1280, 720);
     glEnable(GL_DEPTH_TEST);
+    glClearColor(0.1f, 0.1f, 0.1f, 1.0f);
 
     pangolin::OpenGlRenderState camera_render_state(
         pangolin::ProjectionMatrix(1280, 720, 500, 500, 640, 360, 0.1, 1000.0),
@@ -1230,10 +1370,6 @@ int main(int argc, char **argv) {
     pangolin::View &display = pangolin::CreateDisplay()
             .SetBounds(0.0, 1.0, 0.0, 1.0, -1280.0f / 720.0f)
             .SetHandler(new pangolin::Handler3D(camera_render_state));
-
-    cv::namedWindow("current_frame", cv::WINDOW_NORMAL);
-    cv::namedWindow("matches_before_filtering", cv::WINDOW_NORMAL);
-    cv::namedWindow("matches_after_pnp", cv::WINDOW_NORMAL);
 
     if (!extract_features(map_data.frames[0], orb)) {
         cerr << "feature extraction failed on first frame" << endl;
@@ -1299,7 +1435,9 @@ int main(int argc, char **argv) {
             diag.good_matches = static_cast<int>(match_info.good_matches.size());
             diag.consecutive_reject_count = consecutive_rejects;
             diag.last_accepted_frame = last_accepted_frame;
-            diag.frames_since_last_accept = (last_accepted_frame >= 0) ? (frame_curr.id - last_accepted_frame) : -1;
+            diag.frames_since_last_accept = (last_accepted_frame >= 0)
+                                                ? (frame_curr.id - last_accepted_frame)
+                                                : -1;
             diag.accepted = false;
             diag.reason = "reject_low_good_match_count";
 
@@ -1309,6 +1447,12 @@ int main(int argc, char **argv) {
 
             cerr << "not enough good matches for frame pair "
                     << frame_prev.id << " -> " << frame_curr.id << endl;
+
+            glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+            display.Activate(camera_render_state);
+            draw_trajectory_and_map(map_data);
+            pangolin::FinishFrame();
+
             continue;
         }
 
@@ -1334,7 +1478,7 @@ int main(int argc, char **argv) {
         );
 
         double depth_valid_ratio =
-                (match_info.good_matches.empty())
+                match_info.good_matches.empty()
                     ? -1.0
                     : static_cast<double>(match_info.points_prev_3d_for_pnp.size()) /
                       static_cast<double>(match_info.good_matches.size());
@@ -1349,7 +1493,9 @@ int main(int argc, char **argv) {
             diag.depth_valid_ratio = depth_valid_ratio;
             diag.consecutive_reject_count = consecutive_rejects;
             diag.last_accepted_frame = last_accepted_frame;
-            diag.frames_since_last_accept = (last_accepted_frame >= 0) ? (frame_curr.id - last_accepted_frame) : -1;
+            diag.frames_since_last_accept = (last_accepted_frame >= 0)
+                                                ? (frame_curr.id - last_accepted_frame)
+                                                : -1;
             diag.accepted = false;
 
             if (diag.consecutive_reject_count >= 20 &&
@@ -1375,6 +1521,12 @@ int main(int argc, char **argv) {
                     << " | depth-valid: " << match_info.points_prev_3d_for_pnp.size()
                     << " | depth_valid_ratio: " << depth_valid_ratio
                     << endl;
+
+            glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+            display.Activate(camera_render_state);
+            draw_trajectory_and_map(map_data);
+            pangolin::FinishFrame();
+
             continue;
         }
 
@@ -1391,7 +1543,9 @@ int main(int argc, char **argv) {
             diag.depth_valid_ratio = depth_valid_ratio;
             diag.consecutive_reject_count = consecutive_rejects;
             diag.last_accepted_frame = last_accepted_frame;
-            diag.frames_since_last_accept = (last_accepted_frame >= 0) ? (frame_curr.id - last_accepted_frame) : -1;
+            diag.frames_since_last_accept = (last_accepted_frame >= 0)
+                                                ? (frame_curr.id - last_accepted_frame)
+                                                : -1;
             diag.accepted = false;
             diag.reason = "reject_pnp_failed";
 
@@ -1403,13 +1557,20 @@ int main(int argc, char **argv) {
                     << frame_prev.id << " -> " << frame_curr.id
                     << " | depth-valid: " << match_info.points_prev_3d_for_pnp.size()
                     << endl;
+
+            glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+            display.Activate(camera_render_state);
+            draw_trajectory_and_map(map_data);
+            pangolin::FinishFrame();
+
             continue;
         }
 
         vector<cv::Point2f> inlier_prev_2d_for_F;
         vector<cv::Point2f> inlier_curr_2d_for_F;
         for (int idx_in_pnp_set: match_info.pnp_inlier_indices) {
-            if (idx_in_pnp_set < 0 || idx_in_pnp_set >= static_cast<int>(match_info.points_curr_2d_for_pnp.size())) {
+            if (idx_in_pnp_set < 0 ||
+                idx_in_pnp_set >= static_cast<int>(match_info.points_curr_2d_for_pnp.size())) {
                 continue;
             }
 
@@ -1482,62 +1643,10 @@ int main(int argc, char **argv) {
         all_step_diagnostics.push_back(diag);
         write_csv_row(diagnostics_csv_file, diag);
 
-        string keypoints_text =
-                "frame: " + to_string(frame_curr.id) +
-                " keypoints: " + to_string(frame_curr.keypoints.size()) +
-                " status: " + (diag.accepted ? "ACCEPTED" : "REJECTED");
-
-        string before_text =
-                "raw: " + to_string(match_info.raw_matches.size()) +
-                " good: " + to_string(match_info.good_matches.size()) +
-                " epi_before: " + to_string(match_info.essential_epi_before);
-
-        string after_text =
-                "3D-2D: " + to_string(match_info.points_prev_3d_for_pnp.size()) +
-                " pnp_inliers: " + to_string(match_info.pnp_inlier_matches.size()) +
-                " reproj_after: " + to_string(match_info.reproj_after) +
-                " step_t: " + to_string(diag.step_t_norm);
-
-        cv::Mat keypoints_image = draw_keypoints_image(frame_curr, keypoints_text, diag.accepted);
-        cv::Mat matches_before_image = draw_matches_image(frame_prev, frame_curr, match_info.good_matches, before_text);
-        cv::Mat matches_after_image = draw_matches_image(frame_prev, frame_curr, match_info.pnp_inlier_matches,
-                                                         after_text);
-
-        if (!diag.accepted) {
-            cv::putText(
-                keypoints_image,
-                "REASON: " + diag.reason,
-                cv::Point(20, 70),
-                cv::FONT_HERSHEY_SIMPLEX,
-                0.7,
-                cv::Scalar(0, 0, 255),
-                2
-            );
-        } else if (diag.recovery_mode) {
-            cv::putText(
-                keypoints_image,
-                "RECOVERY ACCEPT",
-                cv::Point(20, 70),
-                cv::FONT_HERSHEY_SIMPLEX,
-                0.7,
-                cv::Scalar(0, 255, 255),
-                2
-            );
-        }
-
-        cv::imshow("current_frame", keypoints_image);
-        cv::imshow("matches_before_filtering", matches_before_image);
-        cv::imshow("matches_after_pnp", matches_after_image);
-
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
         display.Activate(camera_render_state);
         draw_trajectory_and_map(map_data);
         pangolin::FinishFrame();
-
-        char key = static_cast<char>(cv::waitKey(1));
-        if (key == 27 || key == 'q') {
-            break;
-        }
 
         cout
                 << "frame " << frame_prev.id << " -> " << frame_curr.id
@@ -1568,13 +1677,19 @@ int main(int argc, char **argv) {
     diagnostics_csv_file.close();
 
     write_jump_candidates_file(jump_candidates_path, all_step_diagnostics);
-    write_summary_file(summary_path, all_step_diagnostics, static_cast<int>(map_data.frames.size()),
-                       static_cast<int>(map_data.points.size()));
+    write_summary_file(
+        summary_path,
+        all_step_diagnostics,
+        static_cast<int>(map_data.frames.size()),
+        static_cast<int>(map_data.points.size())
+    );
 
     cout << "finished" << endl;
     cout << "wrote: " << diagnostics_csv_path << endl;
     cout << "wrote: " << jump_candidates_path << endl;
     cout << "wrote: " << summary_path << endl;
+
+    save_top_down_map_image(map_data, "top_down_map.png");
 
     return 0;
 }
