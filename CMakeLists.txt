@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.16)
 
-project(slam_system VERSION 0.1.0 LANGUAGES CXX)
+project(slam_system VERSION 0.2.0 LANGUAGES CXX)
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
@@ -10,26 +10,48 @@ endif()
 
 option(SLAM_SYSTEM_ENABLE_WARNINGS "Enable common compiler warnings" ON)
 
-add_executable(slam_system main.cpp)
+# ---------------------------------------------------------------------------
+# Source files
+# ---------------------------------------------------------------------------
+set(SLAM_SOURCES
+    main.cpp
+    slam_map.cpp
+    feature_matcher.cpp
+    epipolar_geometry.cpp
+    triangulation.cpp
+    pnp_relocalizer.cpp
+    diagnostics.cpp
+    optimization.cpp
+    frontend.cpp
+    viewer.cpp
+)
+
+add_executable(slam_system ${SLAM_SOURCES})
 target_compile_features(slam_system PRIVATE cxx_std_17)
 
 if(SLAM_SYSTEM_ENABLE_WARNINGS)
     target_compile_options(slam_system PRIVATE
-            $<$<CXX_COMPILER_ID:GNU,Clang,AppleClang>:-Wall -Wextra -Wpedantic>
-            $<$<CXX_COMPILER_ID:MSVC>:/W4>
+        $<$<CXX_COMPILER_ID:GNU,Clang,AppleClang>:-Wall -Wextra -Wpedantic>
+        $<$<CXX_COMPILER_ID:MSVC>:/W4>
     )
 endif()
 
+# ---------------------------------------------------------------------------
+# Dependencies
+# ---------------------------------------------------------------------------
 find_package(Eigen3 REQUIRED)
 find_package(OpenCV REQUIRED COMPONENTS core imgproc features2d calib3d highgui imgcodecs)
 find_package(Pangolin REQUIRED CONFIG)
 
 target_link_libraries(slam_system PRIVATE
-        Eigen3::Eigen
-        ${OpenCV_LIBS}
+    Eigen3::Eigen
+    ${OpenCV_LIBS}
 )
 
-target_include_directories(slam_system PRIVATE ${OpenCV_INCLUDE_DIRS})
+target_include_directories(slam_system PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${OpenCV_INCLUDE_DIRS}
+)
 
 if(TARGET Pangolin::pangolin)
     target_link_libraries(slam_system PRIVATE Pangolin::pangolin)
