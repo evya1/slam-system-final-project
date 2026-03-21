@@ -606,30 +606,39 @@ static bool estimate_pose_pnp(
     cv::Mat inlier_indices_mat;
     cv::Mat dist_coeffs = cv::Mat::zeros(4, 1, CV_64F);
 
-    bool ok = cv::solvePnPRansac(
-        match_info.points_prev_3d_for_pnp,
-        match_info.points_curr_2d_for_pnp,
-        camera_matrix,
-        dist_coeffs,
-        rvec,
-        tvec,
-        false,
-        150,
-        3.0,
-        0.995,
-        inlier_indices_mat,
-        cv::SOLVEPNP_ITERATIVE
-    );
-
-    if (!ok || inlier_indices_mat.rows < 10) {
+    bool ok = false;
+    try {
+        ok = cv::solvePnPRansac(
+            match_info.points_prev_3d_for_pnp,
+            match_info.points_curr_2d_for_pnp,
+            camera_matrix,
+            dist_coeffs,
+            rvec,
+            tvec,
+            false,
+            150,
+            3.0f,
+            0.995,
+            inlier_indices_mat,
+            cv::SOLVEPNP_ITERATIVE
+        );
+    } catch (const cv::Exception &e) {
+        cerr << "solvePnPRansac exception: " << e.what() << endl;
         return false;
     }
+
+    // OpenCV 4.x may return inliers as Nx1 or 1xN — normalize to a flat list
+    int n_inliers = inlier_indices_mat.rows * inlier_indices_mat.cols;
+    if (!ok || n_inliers < 10) {
+        return false;
+    }
+    cv::Mat inliers_flat = inlier_indices_mat.reshape(1, n_inliers);
 
     match_info.pnp_inlier_indices.clear();
     match_info.pnp_inlier_matches.clear();
 
-    for (int i = 0; i < inlier_indices_mat.rows; ++i) {
-        match_info.pnp_inlier_indices.push_back(inlier_indices_mat.at<int>(i, 0));
+    for (int i = 0; i < n_inliers; ++i) {
+        match_info.pnp_inlier_indices.push_back(inliers_flat.at<int>(i, 0));
     }
 
     for (int idx_in_pnp_set: match_info.pnp_inlier_indices) {
@@ -1550,13 +1559,18 @@ int main(int argc, char **argv) {
             continue;
         }
 
-        cv::Mat F_before = cv::findFundamentalMat(
-            match_info.points_prev_2d,
-            match_info.points_curr_2d,
-            cv::FM_RANSAC,
-            1.0,
-            0.99
-        );
+        cv::Mat F_before;
+        try {
+            F_before = cv::findFundamentalMat(
+                match_info.points_prev_2d,
+                match_info.points_curr_2d,
+                cv::FM_RANSAC,
+                1.0,
+                0.99
+            );
+        } catch (const cv::Exception &e) {
+            cerr << "findFundamentalMat (before) exception: " << e.what() << endl;
+        }
         match_info.essential_epi_before = compute_mean_epipolar_error(
             match_info.points_prev_2d,
             match_info.points_curr_2d,
@@ -1738,13 +1752,18 @@ int main(int argc, char **argv) {
         }
 
         if (inlier_prev_2d_for_F.size() >= 8) {
-            cv::Mat F_after = cv::findFundamentalMat(
-                inlier_prev_2d_for_F,
-                inlier_curr_2d_for_F,
-                cv::FM_RANSAC,
-                1.0,
-                0.99
-            );
+            cv::Mat F_after;
+            try {
+                F_after = cv::findFundamentalMat(
+                    inlier_prev_2d_for_F,
+                    inlier_curr_2d_for_F,
+                    cv::FM_RANSAC,
+                    1.0,
+                    0.99
+                );
+            } catch (const cv::Exception &e) {
+                cerr << "findFundamentalMat (after) exception: " << e.what() << endl;
+            }
             match_info.essential_epi_after = compute_mean_epipolar_error(
                 inlier_prev_2d_for_F,
                 inlier_curr_2d_for_F,
