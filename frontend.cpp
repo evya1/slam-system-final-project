@@ -11,6 +11,23 @@
 #include <unordered_map>
 #include <algorithm>
 
+// ---------------------------------------------------------------------------
+// File-local helper
+// ---------------------------------------------------------------------------
+
+// Return the rotation angle (degrees) of an Eigen rotation matrix R,
+// computed via Rodrigues.  Used only for diagnostic logging.
+static double rotation_angle_deg(const Eigen::Matrix3d& R)
+{
+    cv::Mat R_cv(3, 3, CV_64F);
+    for (int r = 0; r < 3; ++r)
+        for (int c = 0; c < 3; ++c)
+            R_cv.at<double>(r, c) = R(r, c);
+    cv::Mat rvec;
+    cv::Rodrigues(R_cv, rvec);
+    return cv::norm(rvec) * (180.0 / CV_PI);
+}
+
 // Constructor
 
 Frontend::Frontend(cv::Mat K, int orb_features, Viewer* viewer)
@@ -85,13 +102,7 @@ StepDiagnostics Frontend::process(
     }
 
     // Step rotation for diagnostics / acceptance check
-    cv::Mat R_cv(3, 3, CV_64F);
-    for (int r = 0; r < 3; ++r)
-        for (int c = 0; c < 3; ++c)
-            R_cv.at<double>(r, c) = pose_rec.R(r, c);
-    cv::Mat rvec_step;
-    cv::Rodrigues(R_cv, rvec_step);
-    diag.step_r_deg  = cv::norm(rvec_step) * (180.0 / CV_PI);
+    diag.step_r_deg  = rotation_angle_deg(pose_rec.R);
     diag.step_t_norm = pose_rec.t.norm();  // always ≈1.0 for monocular
 
     // 5. Motion-bounds acceptance check
@@ -213,17 +224,10 @@ bool Frontend::should_be_keyframe(
     if (diag.triangulated_points > 80) return true;
 
     // Fallback: look at cumulative rotation from last KF
-    Eigen::Matrix3d dR =
+    const Eigen::Matrix3d dR =
         curr_frame.pose.rotation_matrix *
         last_kf.pose.rotation_matrix.transpose();
-    cv::Mat dR_cv(3, 3, CV_64F);
-    for (int r = 0; r < 3; ++r)
-        for (int c = 0; c < 3; ++c)
-            dR_cv.at<double>(r, c) = dR(r, c);
-    cv::Mat rv;
-    cv::Rodrigues(dR_cv, rv);
-    double cumulative_rot_deg = cv::norm(rv) * (180.0 / CV_PI);
-    if (cumulative_rot_deg >= 5.0) return true;
+    if (rotation_angle_deg(dR) >= 5.0) return true;
 
     return false;
 }

@@ -17,6 +17,8 @@
 //   ⟹  R_cw_new = δR * R_cw_old
 //       t_cw_new = δR * t_cw_old + δρ
 //
+// Residual (2×1):  r = projected − observed  (sign consistent with J above)
+//
 // Jacobian (2×6) of [u, v] w.r.t. δξ:
 //   J = J_π * [ -[x_c]_×  |  I_3 ]
 // where J_π = [fx/z, 0, -fx*xc/z²; 0, fy/z, -fy*yc/z²] (2×3)
