@@ -99,6 +99,8 @@ void write_csv_header(std::ofstream& f) {
       << "pnp_correspondences,pnp_inliers,reproj_error,pnp_periodic_ran,pnp_point_frame,"
       << "optimizer_ran,reproj_before_optim,reproj_after_optim,"
       << "loop_candidate_found,loop_verified,loop_correction_applied,loop_matched_frame_id,"
+      << "loop_corrected_frames,loop_map_points_updated,"
+      << "loop_avg_map_point_displacement,loop_max_map_point_displacement,"
       << "is_keyframe,num_keyframes,"
       << "step_t_norm,step_r_deg,"
       << "consecutive_reject_count,last_accepted_frame,frames_since_last_accept"
@@ -130,6 +132,10 @@ void write_csv_row(std::ofstream& f, const StepDiagnostics& d) {
       << (d.loop_verified ? 1 : 0)        << ","
       << (d.loop_correction_applied ? 1 : 0) << ","
       << d.loop_matched_frame_id    << ","
+      << d.loop_corrected_frames    << ","
+      << d.loop_map_points_updated  << ","
+      << d.loop_avg_map_point_displacement << ","
+      << d.loop_max_map_point_displacement << ","
       << (d.is_keyframe ? 1 : 0)    << ","
       << d.num_keyframes            << ","
       << d.step_t_norm              << ","
@@ -157,6 +163,10 @@ void write_summary_file(
     int accepted = 0, rejected = 0, recovery_accepted = 0, max_consec = 0;
     int optim_ran = 0, pnp_ran = 0, loop_verified = 0, loop_corrected = 0;
     int keyframes = 0;
+    int total_loop_frames_corrected = 0;
+    int total_loop_map_pts_updated  = 0;
+    double max_loop_avg_disp = 0.0;
+    double max_loop_max_disp = 0.0;
 
     for (const auto& s : all_steps) {
         if (s.accepted) {
@@ -169,7 +179,16 @@ void write_summary_file(
         if (s.optimizer_ran)            ++optim_ran;
         if (s.pnp_periodic_ran)         ++pnp_ran;
         if (s.loop_verified)            ++loop_verified;
-        if (s.loop_correction_applied)  ++loop_corrected;
+        if (s.loop_correction_applied) {
+            ++loop_corrected;
+            total_loop_frames_corrected += s.loop_corrected_frames;
+            total_loop_map_pts_updated  += s.loop_map_points_updated;
+            if (s.loop_avg_map_point_displacement > 0.0)
+                max_loop_avg_disp = std::max(max_loop_avg_disp,
+                                             s.loop_avg_map_point_displacement);
+            max_loop_max_disp = std::max(max_loop_max_disp,
+                                         s.loop_max_map_point_displacement);
+        }
         if (s.is_keyframe)              ++keyframes;
     }
 
@@ -186,6 +205,10 @@ void write_summary_file(
     f << "pnp_periodic_ran_count: "     << pnp_ran           << "\n";
     f << "loop_closures_verified: "     << loop_verified     << "\n";
     f << "loop_closures_applied: "      << loop_corrected    << "\n";
+    f << "loop_total_frames_corrected: " << total_loop_frames_corrected << "\n";
+    f << "loop_total_map_pts_updated: "  << total_loop_map_pts_updated  << "\n";
+    f << "loop_max_avg_displacement: "   << max_loop_avg_disp           << "\n";
+    f << "loop_max_max_displacement: "   << max_loop_max_disp           << "\n";
 }
 
 void write_jump_candidates_file(

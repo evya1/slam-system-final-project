@@ -41,6 +41,10 @@ struct StepDiagnostics {
     bool loop_verified           = false;
     bool loop_correction_applied = false;
     int  loop_matched_frame_id   = -1;
+    int  loop_corrected_frames           = 0;
+    int  loop_map_points_updated         = 0;
+    double loop_avg_map_point_displacement = -1.0;
+    double loop_max_map_point_displacement = -1.0;
 
     // Keyframe
     bool is_keyframe  = false;

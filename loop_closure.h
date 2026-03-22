@@ -15,6 +15,12 @@ struct LoopClosureResult {
     int  matched_frame_idx   = -1;     // frame index in SlamMap of old keyframe
     int  match_score         = 0;      // descriptor match count (appearance)
     int  verification_inliers = 0;     // E-matrix inlier count
+
+    // Map-point correction diagnostics (populated when correction_applied == true)
+    int    corrected_frames           = 0;   // frames whose poses were adjusted
+    int    map_points_updated         = 0;   // map points repositioned
+    double avg_map_point_displacement = 0.0; // mean world-space displacement (map units)
+    double max_map_point_displacement = 0.0; // maximum world-space displacement (map units)
 };
 
 // Attempt to detect and close a loop for the keyframe that was just registered.

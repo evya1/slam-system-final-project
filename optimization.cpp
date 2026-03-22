@@ -122,7 +122,7 @@ OptimResult optimize_pose_lm(
     for (int i = 0; i < n; ++i)
         pts_w[i] = {pts3d[i].x, pts3d[i].y, pts3d[i].z};
 
-    // Work in T_cw space (more natural for projection)
+    // Work in T_cw space
     Eigen::Matrix3d R_cw = initial_pose.R_cw();
     Eigen::Vector3d t_cw = initial_pose.t_cw();
 
@@ -144,7 +144,7 @@ OptimResult optimize_pose_lm(
             const double u = fx * x_c.x() / x_c.z() + cx;
             const double v = fy * x_c.y() / x_c.z() + cy;
 
-            // Residual: observed - projected
+            // Residual: projected - observed (matches J and normal equations)
             const Eigen::Vector2d r(u - pts2d[i].x, v - pts2d[i].y);
 
             const auto J = reproj_jacobian(x_c, fx, fy);
@@ -166,7 +166,7 @@ OptimResult optimize_pose_lm(
         const Eigen::Vector3d delta_phi = delta.head<3>();
         const Eigen::Vector3d delta_rho = delta.tail<3>();
 
-        // Rotation update via Rodrigues (exact)
+        // Rotation update via Rodrigues
         const double angle = delta_phi.norm();
         Eigen::Matrix3d delta_R;
         if (angle < 1e-9) {

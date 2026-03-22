@@ -2,7 +2,6 @@
 
 #include <opencv2/calib3d.hpp>
 #include <iostream>
-#include <cmath>
 
 EpipolarResult estimate_epipolar(
     const std::vector<cv::Point2f>& pts1,
@@ -36,9 +35,10 @@ EpipolarResult estimate_epipolar(
     result.num_inliers = cv::countNonZero(result.inlier_mask);
     if (result.num_inliers < 5) return result;
 
-    // Compute F = K^{-T} * E * K^{-1}  for epipolar-error diagnostics
-    cv::Mat K_inv;
-    cv::invert(K, K_inv);
+    // Compute F = K^{-T} * E * K^{-1} for epipolar-error diagnostics.
+    cv::Mat K64, K_inv;
+    K.convertTo(K64, CV_64F);
+    cv::invert(K64, K_inv);
     result.F = K_inv.t() * result.E * K_inv;
 
     result.mean_epi_error = compute_mean_epipolar_error(pts1, pts2, result.F);
@@ -57,7 +57,7 @@ PoseRecoveryResult recover_pose_from_essential(
     if (!epi.success || epi.E.empty()) return result;
 
     cv::Mat R_cv, t_cv;
-    // Copy the inlier mask so recoverPose can further update it
+    // Copy the inlier mask so recoverPose can further update it.
     cv::Mat mask_mat(epi.inlier_mask);
 
     int n = 0;
@@ -71,18 +71,14 @@ PoseRecoveryResult recover_pose_from_essential(
     if (n < 5) return result;
 
     result.num_inliers = n;
-    result.inlier_mask.assign(
-        mask_mat.data,
-        mask_mat.data + mask_mat.total());
+    result.inlier_mask.assign(mask_mat.data, mask_mat.data + mask_mat.total());
 
-    R_cv.convertTo(R_cv, CV_64F);
-    t_cv.convertTo(t_cv, CV_64F);
+    cv::Mat R64, t64;
+    R_cv.convertTo(R64, CV_64F);
+    t_cv.convertTo(t64, CV_64F);
 
-    for (int r = 0; r < 3; ++r) {
-        for (int c = 0; c < 3; ++c)
-            result.R(r, c) = R_cv.at<double>(r, c);
-        result.t(r) = t_cv.at<double>(r, 0);
-    }
+    cv::cv2eigen(R64, result.R);
+    cv::cv2eigen(t64, result.t);
 
     result.success = true;
     return result;
@@ -105,10 +101,10 @@ double compute_mean_epipolar_error(
         cv::Mat x1 = (cv::Mat_<double>(3, 1) << pts1[i].x, pts1[i].y, 1.0);
         cv::Mat line2 = F64 * x1;
 
-        double a = line2.at<double>(0);
-        double b = line2.at<double>(1);
-        double c = line2.at<double>(2);
-        double denom = std::sqrt(a * a + b * b);
+        const double a = line2.at<double>(0);
+        const double b = line2.at<double>(1);
+        const double c = line2.at<double>(2);
+        const double denom = std::sqrt(a * a + b * b);
         if (denom > 1e-12) {
             total += std::fabs(a * pts2[i].x + b * pts2[i].y + c) / denom;
             ++count;

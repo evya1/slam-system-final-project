@@ -254,6 +254,10 @@ void Frontend::register_keyframe(
         diag.loop_verified           = lc.verified;
         diag.loop_correction_applied = lc.correction_applied;
         diag.loop_matched_frame_id   = lc.matched_frame_id;
+        diag.loop_corrected_frames           = lc.corrected_frames;
+        diag.loop_map_points_updated         = lc.map_points_updated;
+        diag.loop_avg_map_point_displacement = lc.avg_map_point_displacement;
+        diag.loop_max_map_point_displacement = lc.max_map_point_displacement;
 
         if (lc.correction_applied) {
             // Cull any map points invalidated by the correction

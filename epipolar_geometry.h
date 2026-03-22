@@ -42,7 +42,7 @@ PoseRecoveryResult recover_pose_from_essential(
     const std::vector<cv::Point2f>& pts2,
     const cv::Mat& K);
 
-// Mean symmetric epipolar distance  x2^T F x1  for all point pairs.
+// Mean point-to-epipolar-line distance in image 2: |x2^T F x1| / ||(Fx1)_{0:1}||.
 double compute_mean_epipolar_error(
     const std::vector<cv::Point2f>& pts1,
     const std::vector<cv::Point2f>& pts2,

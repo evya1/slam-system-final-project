@@ -2,6 +2,7 @@
 
 #include <Eigen/Dense>
 #include <opencv2/core.hpp>
+#include <opencv2/core/eigen.hpp>
 #include <opencv2/calib3d.hpp>
 
 // =============================================================================
@@ -53,15 +54,12 @@ struct Pose {
     // Returns P = K * [R_cw | t_cw] as a 3×4 CV_64F matrix.
     // Use this for triangulation and reprojection.
     cv::Mat projection_matrix(const cv::Mat& K) const {
-        Eigen::Matrix3d Rcw = R_cw();
-        Eigen::Vector3d tcw = t_cw();
+        cv::Mat R_part, t_part;
+        cv::eigen2cv(R_cw(), R_part); // 3×3 CV_64F
+        cv::eigen2cv(t_cw(), t_part); // 3×1 CV_64F
 
-        cv::Mat Rt(3, 4, CV_64F);
-        for (int r = 0; r < 3; ++r) {
-            for (int c = 0; c < 3; ++c)
-                Rt.at<double>(r, c) = Rcw(r, c);
-            Rt.at<double>(r, 3) = tcw(r);
-        }
+        cv::Mat Rt;
+        cv::hconcat(R_part, t_part, Rt);
 
         cv::Mat K64;
         K.convertTo(K64, CV_64F);
@@ -115,9 +113,9 @@ struct Pose {
     // (output of cv::recoverPose; |t_21| == 1, scale unknown in monocular)
     //
     // Do NOT use when object points are in world frame — use from_world_to_camera_cv.
-    static Pose from_relative(const Pose&           prev_pose,
-                               const Eigen::Matrix3d& R_21,
-                               const Eigen::Vector3d& t_21) {
+    static Pose from_relative(const Pose &prev_pose,
+                              const Eigen::Matrix3d &R_21,
+                              const Eigen::Vector3d &t_21) {
         // Invert to get camera-2-in-world: R_wc2 = R_21^T, t_wc2 = -R_21^T * t_21
         Pose delta;
         delta.rotation_matrix    =  R_21.transpose();
@@ -144,14 +142,12 @@ struct Pose {
 
         Eigen::Matrix3d R_cw;
         Eigen::Vector3d t_cw;
-        for (int r = 0; r < 3; ++r) {
-            for (int c = 0; c < 3; ++c) R_cw(r, c) = R64.at<double>(r, c);
-            t_cw(r) = t64.at<double>(r, 0);
-        }
+        cv::cv2eigen(R64, R_cw);
+        cv::cv2eigen(t64, t_cw);
 
         // T_wc = inverse of T_cw
-        Eigen::Matrix3d R_wc = R_cw.transpose();
-        Eigen::Vector3d t_wc = -(R_wc * t_cw);
+        const Eigen::Matrix3d R_wc = R_cw.transpose();
+        const Eigen::Vector3d t_wc = -(R_wc * t_cw);
         return Pose(R_wc, t_wc);
     }
 };
