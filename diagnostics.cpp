@@ -4,8 +4,6 @@
 #include <iostream>
 #include <iomanip>
 
-// Motion statistics
-
 static double median_of_vector(std::vector<double> v, double fallback) {
     if (v.empty()) return fallback;
     std::sort(v.begin(), v.end());
@@ -28,8 +26,6 @@ AcceptedMotionStats compute_recent_motion_stats(
     stats.median_step_r_deg = std::max(median_of_vector(rs, 1.0),  0.15);
     return stats;
 }
-
-// Acceptance evaluation
 
 bool evaluate_motion_acceptance(
     StepDiagnostics& diag,
@@ -90,8 +86,6 @@ bool evaluate_motion_acceptance(
     return true;
 }
 
-// CSV output
-
 void write_csv_header(std::ofstream& f) {
     f << "prev_frame,curr_frame,accepted,reason,pose_source,recovery_mode,"
       << "raw_matches,good_matches,epipolar_inliers,inlier_ratio,epi_error,"
@@ -145,8 +139,6 @@ void write_csv_row(std::ofstream& f, const StepDiagnostics& d) {
       << d.frames_since_last_accept
       << "\n";
 }
-
-// Summary / jump candidates
 
 void write_summary_file(
     const std::string& path,

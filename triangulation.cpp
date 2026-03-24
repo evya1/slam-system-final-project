@@ -3,21 +3,16 @@
 #include <opencv2/calib3d.hpp>
 #include <cmath>
 
-// Projection matrix P = K * [R_cw | t_cw]
-// Delegates to Pose::projection_matrix() which encapsulates the conversion.
 static cv::Mat make_projection_matrix(const Pose& pose, const cv::Mat& K) {
     return pose.projection_matrix(K);
 }
 
-// Parallax angle (degrees) between two bearing vectors in the world frame.
-// A low parallax means the two cameras are almost collinear with the point —
-// triangulation is ill-conditioned in that case.
+// Parallax angle in degrees. Low parallax -> ill-conditioned triangulation.
 static double parallax_deg(
     const Eigen::Vector3d& p_world,
     const Pose& pose1,
     const Pose& pose2)
 {
-    // Camera centres in world frame (= translation vectors for T_wc)
     const Eigen::Vector3d& c1 = pose1.translation_vector;
     const Eigen::Vector3d& c2 = pose2.translation_vector;
 
@@ -28,8 +23,6 @@ static double parallax_deg(
     cos_angle = std::max(-1.0, std::min(1.0, cos_angle));
     return std::acos(cos_angle) * (180.0 / M_PI);
 }
-
-// Main triangulation
 
 TriangulationResult triangulate_points(
     const std::vector<cv::Point2f>& pts1,
@@ -51,16 +44,13 @@ TriangulationResult triangulate_points(
     cv::Mat P1 = make_projection_matrix(pose1, K);
     cv::Mat P2 = make_projection_matrix(pose2, K);
 
-    // triangulatePoints always outputs CV_32F in all OpenCV versions we care
-    // about, regardless of the input precision.  Convert explicitly to CV_64F
-    // so all subsequent arithmetic uses double.
+    // triangulatePoints outputs CV_32F regardless of input; convert to CV_64F.
     cv::Mat points4d_f;
     cv::triangulatePoints(P1, P2, pts1, pts2, points4d_f);
 
     cv::Mat points4d;
     points4d_f.convertTo(points4d, CV_64F);   // 4×N  CV_64F
 
-    // World-to-camera transforms for cheirality check
     Eigen::Matrix3d R1_cw = pose1.R_cw();
     Eigen::Vector3d t1_cw = pose1.t_cw();
     Eigen::Matrix3d R2_cw = pose2.R_cw();
@@ -75,17 +65,15 @@ TriangulationResult triangulate_points(
             points4d.at<double>(1, i) / w,
             points4d.at<double>(2, i) / w);
 
-        // Finite coordinate check
         if (!p_world.allFinite()) continue;
 
-        // Depth in camera 1 and camera 2 (z-component in camera frame)
         double z1 = (R1_cw * p_world + t1_cw).z();
         double z2 = (R2_cw * p_world + t2_cw).z();
 
         if (z1 < min_depth || z1 > max_depth) continue;
         if (z2 < min_depth || z2 > max_depth) continue;
 
-        // Parallax check — reject near-degenerate triangulation
+        // Reject near-degenerate triangulation
         if (parallax_deg(p_world, pose1, pose2) < min_parallax_deg) continue;
 
         result.points_3d[i] = p_world;

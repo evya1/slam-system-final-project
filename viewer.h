@@ -35,8 +35,6 @@ public:
         const std::vector<cv::DMatch>& raw_matches,
         const std::vector<cv::DMatch>& filtered_matches) const;
 
-    // --- Static image helpers (return cv::Mat, do not display) ---
-
     static cv::Mat draw_keypoints_image(
         const Frame&       frame,
         const std::string& overlay_text,

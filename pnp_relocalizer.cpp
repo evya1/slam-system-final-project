@@ -38,7 +38,7 @@ PnPResult solve_pnp(
         return result;
     }
 
-    // OpenCV 4.x may return inliers as Nx1 or 1xN — normalise to flat list
+    // OpenCV 4.x may return inliers as Nx1 or 1xN - normalise to flat list
     int n_inliers = inliers_mat.rows * inliers_mat.cols;
     if (!ok || n_inliers < min_inliers) return result;
 

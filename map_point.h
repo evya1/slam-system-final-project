@@ -10,18 +10,14 @@ struct Observation {
     int keypoint_idx = -1;  // index into frame.keypoints
 };
 
-// A 3-D landmark in the world map created by triangulation.
-// Stores back-references to every frame that observes it so that
-// future PnP relocalization and bundle adjustment can look up
-// 3D→2D correspondences without a brute-force search.
+// A 3D landmark in the world map created by triangulation.
+// Back-references to observing frames allow fast 3D-to-2D lookup for PnP.
 struct MapPoint {
     int              id       = -1;
     Eigen::Vector3d  position = Eigen::Vector3d::Zero();
     bool             valid    = true;
 
-    // Representative ORB descriptor (one row, CV_8U).
-    // Set from the first observing frame; used for global PnP matching.
-    cv::Mat descriptor;
+    cv::Mat descriptor;  // representative ORB descriptor; used for PnP matching
 
     std::vector<Observation> observations;
 

@@ -57,8 +57,7 @@ PoseRecoveryResult recover_pose_from_essential(
     if (!epi.success || epi.E.empty()) return result;
 
     cv::Mat R_cv, t_cv;
-    // Copy the inlier mask so recoverPose can further update it.
-    cv::Mat mask_mat(epi.inlier_mask);
+    cv::Mat mask_mat(epi.inlier_mask);  // recoverPose may further update this mask
 
     int n = 0;
     try {

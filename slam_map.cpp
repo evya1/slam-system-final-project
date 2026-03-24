@@ -39,13 +39,11 @@ void SlamMap::cull_map_points(int min_observations) {
     for (MapPoint& mp : map_points_) {
         if (!mp.valid) continue;
 
-        // Require minimum observation count
         if (mp.observation_count() < min_observations) {
             mp.valid = false;
             continue;
         }
 
-        // Require finite position
         if (!mp.position.allFinite()) {
             mp.valid = false;
             continue;

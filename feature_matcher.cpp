@@ -29,7 +29,7 @@ MatchInfo match_features(const Frame& prev, const Frame& curr) {
 
     if (info.good_matches.empty()) return info;
 
-    // Additional distance filter: keep only matches within 2.2× the minimum
+    // Additional distance filter: keep only matches within 2.2x the minimum
     double min_dist = std::numeric_limits<double>::max();
     for (const auto& m : info.good_matches)
         min_dist = std::min(min_dist, static_cast<double>(m.distance));

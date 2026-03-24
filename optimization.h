@@ -6,24 +6,11 @@
 #include <opencv2/core.hpp>
 #include <vector>
 
-// =============================================================================
-// Pose-only Levenberg-Marquardt optimizer
-//
-// Minimises the sum of squared reprojection errors over a set of 3D-2D
-// correspondences, optimising only the current-frame pose.
-//
-// State:  δξ = [δφ (3), δρ (3)]  — left perturbation of T_cw
-//   T_cw_new = exp([δφ]_×) * T_cw_old
-//   ⟹  R_cw_new = δR * R_cw_old
-//       t_cw_new = δR * t_cw_old + δρ
-//
-// Residual (2×1):  r = projected − observed  (sign consistent with J above)
-//
-// Jacobian (2×6) of [u, v] w.r.t. δξ:
-//   J = J_π * [ -[x_c]_×  |  I_3 ]
-// where J_π = [fx/z, 0, -fx*xc/z²; 0, fy/z, -fy*yc/z²] (2×3)
-// =============================================================================
-
+// Pose-only Levenberg-Marquardt optimizer.
+// Minimises sum-of-squared reprojection errors over world-frame 3D-2D correspondences.
+// State: left perturbation of T_cw as [delta_phi (3), delta_rho (3)].
+// Residual: projected - observed.
+// Jacobian (2x6): J = J_pi * [-[x_c]_x | I_3]
 struct OptimResult {
     Pose   optimized_pose;
     double reproj_before = -1.0;   // RMS reprojection error before (pixels)
@@ -33,9 +20,9 @@ struct OptimResult {
 };
 
 // Pose-only LM optimisation.
-// pts3d — world-frame 3D points
-// pts2d — corresponding observed 2D image points
-// K     — camera intrinsics (3×3)
+// pts3d -- world-frame 3D points
+// pts2d -- corresponding observed 2D image points
+// K     -- camera intrinsics (3x3)
 OptimResult optimize_pose_lm(
     const Pose&                      initial_pose,
     const std::vector<cv::Point3f>&  pts3d,

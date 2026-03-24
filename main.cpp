@@ -19,8 +19,6 @@
 
 namespace fs = std::filesystem;
 
-// Dataset helpers
-
 // Load a TUM-style timestamp file: "timestamp  relative/path"
 static std::vector<std::pair<double, std::string>>
 load_timestamp_file(const std::string& file_path) {
@@ -39,20 +37,17 @@ load_timestamp_file(const std::string& file_path) {
     return entries;
 }
 
-// Supported image extensions
 static bool is_image_extension(const std::string& ext) {
     std::string e = ext;
     std::transform(e.begin(), e.end(), e.begin(), ::tolower);
     return e == ".png" || e == ".jpg" || e == ".jpeg" || e == ".bmp";
 }
 
-// Collect sorted image paths from a directory.
-// If rgb.txt exists, use it (TUM style).  Otherwise scan for image files.
+// Prefer rgb.txt (TUM format) if present; otherwise scan common subdirectories.
 static std::vector<std::pair<double, std::string>>
 collect_image_paths(const std::string& dataset_path) {
     const std::string rgb_txt = dataset_path + "/rgb.txt";
 
-    // Prefer rgb.txt if it exists and is non-empty
     if (fs::exists(rgb_txt)) {
         auto entries = load_timestamp_file(rgb_txt);
         if (!entries.empty()) {
@@ -61,8 +56,7 @@ collect_image_paths(const std::string& dataset_path) {
         }
     }
 
-    // Fallback: scan for image files directly.
-    // Also check common sub-directories: rgb/, images/, frames/
+    // Scan rgb/, images/, frames/, or the dataset root
     std::vector<std::string> search_dirs = {
         dataset_path,
         dataset_path + "/rgb",
@@ -83,7 +77,7 @@ collect_image_paths(const std::string& dataset_path) {
 
     if (found_paths.empty()) return {};
 
-    // Sort lexicographically — works for zero-padded numeric filenames
+    // Lexicographic sort works for zero-padded filenames
     std::sort(found_paths.begin(), found_paths.end());
 
     std::vector<std::pair<double, std::string>> entries;
@@ -95,33 +89,23 @@ collect_image_paths(const std::string& dataset_path) {
     return entries;
 }
 
-// Camera intrinsics
-//
-// If no calibration file is available we build K from the first image's size.
-//
-// Heuristic (common in monocular VO literature):
-//   fx = fy = max(W, H)       — corresponds to ~45–53° diagonal FOV
-//   cx = W / 2.0
-//   cy = H / 2.0
-//
-// This is document-quality for unknown-calibration sequences; pass explicit
-// values via --fx/--fy/... flags when metric accuracy is desired.
+// Fallback intrinsics when no calibration is given: f = max(W,H), cx/cy at image centre.
+// Pass --fx/--fy/--cx/--cy for metric accuracy.
 static cv::Mat build_K_from_image(const cv::Mat& img) {
     const double W = img.cols;
     const double H = img.rows;
-    const double f = std::max(W, H);   // focal length heuristic
+    const double f = std::max(W, H);
     const double cx = W / 2.0;
     const double cy = H / 2.0;
     cv::Mat K = (cv::Mat_<double>(3, 3) <<
         f,   0.0, cx,
         0.0,  f,  cy,
         0.0, 0.0, 1.0);
-    std::cout << "intrinsics (from image size " << (int)W << "×" << (int)H << "):\n"
+    std::cout << "intrinsics (from image size " << (int)W << "x" << (int)H << "):\n"
               << "  fx = fy = " << f << "  cx = " << cx << "  cy = " << cy << "\n";
     return K;
 }
 
-// Optionally parse simple --fx / --fy / --cx / --cy command-line overrides.
 static cv::Mat parse_or_build_K(int argc, char** argv, const cv::Mat& img) {
     double fx = -1, fy = -1, cx = -1, cy = -1;
     for (int i = 1; i < argc - 1; ++i) {
@@ -142,8 +126,7 @@ static cv::Mat parse_or_build_K(int argc, char** argv, const cv::Mat& img) {
     return build_K_from_image(img);
 }
 
-// Key event helper
-
+// Returns false to quit. Handles pause and +/- speed controls.
 static bool handle_key_events(bool& paused, int& frame_delay_ms) {
     while (true) {
         int key = cv::waitKey(paused ? 0 : frame_delay_ms);
@@ -161,17 +144,34 @@ static bool handle_key_events(bool& paused, int& frame_delay_ms) {
     }
 }
 
-// main
+void frame_print_debug(SlamMap map, Frame &prev, Frame &curr, StepDiagnostics diag) {
+    std::cout
+            << "frame " << prev.id << "->" << curr.id
+            << " | " << (diag.accepted ? "OK" : "REJ")
+            << " | " << diag.reason
+            << " | src=" << diag.pose_source
+            << " | raw=" << diag.raw_matches
+            << " | good=" << diag.good_matches
+            << " | epi=" << diag.epipolar_inliers
+            << " | err=" << diag.epi_error
+            << " | tri=" << diag.triangulated_points
+            << " | pnp=" << diag.pnp_inliers
+            << " | optim=" << (diag.optimizer_ran ? "Y" : "N")
+            << " | reproj=" << diag.reproj_after_optim
+            << " | kf=" << (diag.is_keyframe ? "Y" : "N")
+            << " | kfs=" << diag.num_keyframes
+            << " | lc=" << (diag.loop_correction_applied ? "Y" : "N")
+            << " | map=" << map.map_point_count()
+            << "\n";
+}
 
 int main(int argc, char** argv) {
     std::cout << "========================================\n"
-              << "  Monocular RGB SLAM (HW3)  v0.3.0\n"
+              << "   SLAM HW3 \n"
               << "========================================\n";
     std::cout << "cwd: " << fs::current_path().string() << "\n";
 
-    // Dataset path
     std::string dataset_path;
-    // First non-flag argument is the dataset path
     for (int i = 1; i < argc; ++i) {
         std::string a = argv[i];
         if (a.size() > 2 && a.substr(0, 2) == "--") continue;
@@ -182,7 +182,6 @@ int main(int argc, char** argv) {
     }
 
     if (dataset_path.empty()) {
-        // Search common relative locations
         for (const std::string& c : {
                 std::string("./dataset"),
                 std::string("./Dataset_VO"),
@@ -205,23 +204,19 @@ int main(int argc, char** argv) {
 
     std::cout << "dataset: " << dataset_path << "\n";
 
-    // Collect image list
     auto image_list = collect_image_paths(dataset_path);
     if (image_list.empty()) {
         std::cerr << "ERROR: no images found in " << dataset_path << "\n";
         return 1;
     }
 
-    // Build a helper to resolve relative paths from the rgb.txt
     auto resolve_path = [&](const std::string& p) -> std::string {
         if (fs::path(p).is_absolute()) return p;
-        // If path does not start with the dataset_path, prepend it
         const std::string full = dataset_path + "/" + p;
         if (fs::exists(full)) return full;
-        return p;  // already absolute (directory-scan case)
+        return p;
     };
 
-    // Load first image to determine size and build K
     cv::Mat first_img = cv::imread(resolve_path(image_list[0].second), cv::IMREAD_COLOR);
     if (first_img.empty()) {
         std::cerr << "ERROR: cannot read first image: "
@@ -230,7 +225,6 @@ int main(int argc, char** argv) {
     }
     cv::Mat K = parse_or_build_K(argc, argv, first_img);
 
-    // Load frames into SlamMap
     SlamMap map;
     int skipped = 0;
 
@@ -264,34 +258,27 @@ int main(int argc, char** argv) {
     std::cout << "loaded " << map.frame_count() << " frames\n";
     std::cout << "camera matrix:\n" << K << "\n";
 
-    // Viewer + frontend
     Viewer   viewer;
     Frontend frontend(K, 3000, &viewer);
 
-    // Extract features for frame 0
     if (!frontend.extract_features(map.frame_at(0))) {
         std::cerr << "feature extraction failed on first frame\n";
         return 1;
     }
-    // Frame 0 is the reference — identity pose (already default)
     map.frame_at(0).pose = Pose::identity();
 
-    // Geometry self-checks (debug builds only)
 #ifndef NDEBUG
     run_geometry_self_checks();
 #endif
 
-    // Diagnostics output files
-    const std::string csv_path     = "slam_diagnostics.csv";
-    const std::string jump_path    = "slam_jump_candidates.txt";
-    const std::string summary_path = "slam_summary.txt";
-
-    std::ofstream csv_file(csv_path);
-    if (!csv_file.is_open()) {
-        std::cerr << "failed to open: " << csv_path << "\n";
-        return 1;
-    }
-    write_csv_header(csv_file);
+    // Optional: uncomment below to write per-frame diagnostics to CSV
+    // const std::string csv_path = "slam_diagnostics.csv";
+    // std::ofstream csv_file(csv_path);
+    // if (!csv_file.is_open()) {
+    //     std::cerr << "failed to open: " << csv_path << "\n";
+    //     return 1;
+    // }
+    // write_csv_header(csv_file);
 
     std::vector<StepDiagnostics> all_diags;
     bool paused      = false;
@@ -300,7 +287,6 @@ int main(int argc, char** argv) {
     std::cout << "processing " << map.frame_count() << " frames...\n";
     std::cout << "controls: q/ESC quit | SPACE pause | +/- speed\n";
 
-    // Main tracking loop
     for (int idx = 1; idx < map.frame_count(); ++idx) {
         if (viewer.should_quit()) break;
 
@@ -314,28 +300,11 @@ int main(int argc, char** argv) {
 
         StepDiagnostics diag = frontend.process(prev, curr, map);
         all_diags.push_back(diag);
-        write_csv_row(csv_file, diag);
+        // write_csv_row(csv_file, diag);  // Optional CSV output
 
         viewer.render(map);
 
-        std::cout
-            << "frame " << prev.id << "->" << curr.id
-            << " | " << (diag.accepted ? "OK" : "REJ")
-            << " | " << diag.reason
-            << " | src=" << diag.pose_source
-            << " | raw=" << diag.raw_matches
-            << " | good=" << diag.good_matches
-            << " | epi=" << diag.epipolar_inliers
-            << " | err=" << diag.epi_error
-            << " | tri=" << diag.triangulated_points
-            << " | pnp=" << diag.pnp_inliers
-            << " | optim=" << (diag.optimizer_ran ? "Y" : "N")
-            << " | reproj=" << diag.reproj_after_optim
-            << " | kf=" << (diag.is_keyframe ? "Y" : "N")
-            << " | kfs=" << diag.num_keyframes
-            << " | lc=" << (diag.loop_correction_applied ? "Y" : "N")
-            << " | map=" << map.map_point_count()
-            << "\n";
+        // frame_print_debug(map, prev, curr, diag);
 
         if (!handle_key_events(paused, frame_delay)) {
             std::cout << "quit by user\n";
@@ -343,17 +312,14 @@ int main(int argc, char** argv) {
         }
     }
 
-    // Final output
-    csv_file.close();
+    // csv_file.close();  // Optional CSV output
 
-    write_jump_candidates_file(jump_path, all_diags);
-    write_summary_file(summary_path, all_diags,
-                       map.frame_count(), map.map_point_count());
+    // Optional: uncomment to write text summary and jump-candidate files
+    // write_jump_candidates_file("slam_jump_candidates.txt", all_diags);
+    // write_summary_file("slam_summary.txt", all_diags,
+    //                    map.frame_count(), map.map_point_count());
 
-    std::cout << "finished\n"
-              << "wrote: " << csv_path     << "\n"
-              << "wrote: " << jump_path    << "\n"
-              << "wrote: " << summary_path << "\n";
+    std::cout << "finished\n";
 
     Viewer::save_top_down_map_image(map, "top_down_map.png");
 

@@ -6,8 +6,6 @@
 #include <limits>
 #include <algorithm>
 
-// Construction / Pangolin + OpenCV window setup
-
 Viewer::Viewer(int width, int height)
     : width_(width), height_(height)
 {
@@ -24,7 +22,6 @@ Viewer::Viewer(int width, int height)
                    -static_cast<float>(width_) / static_cast<float>(height_))
         .SetHandler(new pangolin::Handler3D(camera_render_state_));
 
-    // OpenCV display windows
     cv::namedWindow("SLAM: Keypoints",        cv::WINDOW_NORMAL);
     cv::namedWindow("SLAM: Matches (raw)",    cv::WINDOW_NORMAL);
     cv::namedWindow("SLAM: Matches (inlier)", cv::WINDOW_NORMAL);
@@ -39,8 +36,6 @@ Viewer::Viewer(int width, int height)
 
     cv::waitKey(1);
 }
-
-// Render (called once per frame)
 
 void Viewer::render(const SlamMap& map) {
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
@@ -64,7 +59,6 @@ void Viewer::show_matches(
     const std::vector<cv::DMatch>& raw_matches,
     const std::vector<cv::DMatch>& filtered_matches) const
 {
-    // Raw matches window
     {
         const std::string text =
             "raw matches: " + std::to_string(raw_matches.size()) +
@@ -73,7 +67,6 @@ void Viewer::show_matches(
         cv::imshow("SLAM: Matches (raw)", img);
     }
 
-    // Filtered / inlier matches window
     {
         const std::string text =
             "inlier matches: " + std::to_string(filtered_matches.size()) +
@@ -83,10 +76,7 @@ void Viewer::show_matches(
     }
 }
 
-// Static OpenGL drawing
-
 void Viewer::draw_trajectory_and_map_gl(const SlamMap& map) {
-    // Map points (white dots)
     glPointSize(2.0f);
     glBegin(GL_POINTS);
     glColor3f(1.0f, 1.0f, 1.0f);
@@ -96,7 +86,6 @@ void Viewer::draw_trajectory_and_map_gl(const SlamMap& map) {
     }
     glEnd();
 
-    // Trajectory line (red)
     glLineWidth(2.0f);
     glBegin(GL_LINE_STRIP);
     glColor3f(1.0f, 0.0f, 0.0f);
@@ -106,13 +95,13 @@ void Viewer::draw_trajectory_and_map_gl(const SlamMap& map) {
     }
     glEnd();
 
-    // Per-frame axes (small) — keyframes drawn larger and in a different colour
+    // Keyframes drawn larger in a distinct colour
     for (const Frame& f : map.frames()) {
         glPushMatrix();
         Eigen::Matrix4d T = f.pose.matrix();
         glMultMatrixd(T.data());
         if (f.is_keyframe) {
-            glColor3f(0.0f, 1.0f, 0.5f);  // green-teal for keyframes
+            glColor3f(0.0f, 1.0f, 0.5f);  // teal for keyframes
             pangolin::glDrawAxis(0.2);
         } else {
             pangolin::glDrawAxis(0.05);
@@ -120,8 +109,6 @@ void Viewer::draw_trajectory_and_map_gl(const SlamMap& map) {
         glPopMatrix();
     }
 }
-
-// Static image helpers
 
 cv::Mat Viewer::draw_keypoints_image(
     const Frame&       frame,
@@ -213,7 +200,6 @@ void Viewer::save_top_down_map_image(
 
     cv::Mat img(image_height, image_width, CV_8UC3, cv::Scalar(0, 0, 0));
 
-    // Map points
     for (const MapPoint& mp : map.map_points()) {
         if (!mp.valid || !mp.position.allFinite()) continue;
         cv::Point px = to_pixel(mp.position.x(), mp.position.z());
@@ -221,7 +207,6 @@ void Viewer::save_top_down_map_image(
             img.at<cv::Vec3b>(px.y, px.x) = cv::Vec3b(255, 255, 255);
     }
 
-    // Trajectory (blue line, red dots, keyframes in green)
     const auto& frames = map.frames();
     for (size_t i = 1; i < frames.size(); ++i) {
         const auto& a = frames[i - 1].pose.translation_vector;
@@ -235,18 +220,17 @@ void Viewer::save_top_down_map_image(
         auto px = to_pixel(f.pose.translation_vector.x(),
                            f.pose.translation_vector.z());
         if (f.is_keyframe)
-            cv::circle(img, px, 4, cv::Scalar(0, 200, 100), -1);  // keyframe: teal
+            cv::circle(img, px, 4, cv::Scalar(0, 200, 100), -1);  // teal: keyframe
         else
             cv::circle(img, px, 2, cv::Scalar(255, 100, 100), -1);
     }
-    // Mark start and end
     if (!frames.empty() && frames.front().pose.translation_vector.allFinite()) {
         const auto& t = frames.front().pose.translation_vector;
-        cv::circle(img, to_pixel(t.x(), t.z()), 8, cv::Scalar(0, 255, 255), 2);  // start: cyan
+        cv::circle(img, to_pixel(t.x(), t.z()), 8, cv::Scalar(0, 255, 255), 2);  // cyan: start
     }
     if (!frames.empty() && frames.back().pose.translation_vector.allFinite()) {
         const auto& t = frames.back().pose.translation_vector;
-        cv::circle(img, to_pixel(t.x(), t.z()), 8, cv::Scalar(0, 255, 0), -1);   // end: green
+        cv::circle(img, to_pixel(t.x(), t.z()), 8, cv::Scalar(0, 255, 0), -1);   // green: end
     }
 
     cv::putText(img, "Top-down map  (X-Z plane)  white=pts  blue=traj  teal=KF",

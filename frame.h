@@ -23,10 +23,6 @@ struct Frame {
     Pose pose;
     bool processed   = false;
 
-    // Keyframe flag.  Set by the frontend when this frame is selected as a
-    // keyframe (sufficient baseline / motion since the previous keyframe).
-    bool is_keyframe    = false;
-
-    // Index of this frame's entry in KeyframeDB (-1 if not a keyframe).
-    int  keyframe_db_idx = -1;
+    bool is_keyframe    = false;          // set by frontend on keyframe selection
+    int  keyframe_db_idx = -1;            // -1 if not a keyframe
 };

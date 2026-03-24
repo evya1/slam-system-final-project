@@ -11,12 +11,7 @@
 #include <unordered_map>
 #include <algorithm>
 
-// ---------------------------------------------------------------------------
-// File-local helper
-// ---------------------------------------------------------------------------
-
-// Return the rotation angle (degrees) of an Eigen rotation matrix R,
-// computed via Rodrigues.  Used only for diagnostic logging.
+// Rotation angle in degrees via Rodrigues. Used for diagnostic logging.
 static double rotation_angle_deg(const Eigen::Matrix3d& R)
 {
     cv::Mat R_cv(3, 3, CV_64F);
@@ -27,8 +22,6 @@ static double rotation_angle_deg(const Eigen::Matrix3d& R)
     cv::Rodrigues(R_cv, rvec);
     return cv::norm(rvec) * (180.0 / CV_PI);
 }
-
-// Constructor
 
 Frontend::Frontend(cv::Mat K, int orb_features, Viewer* viewer)
     : K_(std::move(K)), viewer_(viewer)
@@ -42,8 +35,6 @@ Frontend::Frontend(cv::Mat K, int orb_features, Viewer* viewer)
 bool Frontend::extract_features(Frame& frame) const {
     return ::extract_features(frame, const_cast<cv::Ptr<cv::ORB>&>(orb_));
 }
-
-// Main processing step
 
 StepDiagnostics Frontend::process(
     Frame& prev_frame, Frame& curr_frame, SlamMap& map)
@@ -66,12 +57,10 @@ StepDiagnostics Frontend::process(
         return diag;
     };
 
-    // 1. Feature matching
     MatchInfo match = match_features(prev_frame, curr_frame);
     diag.raw_matches  = static_cast<int>(match.raw_matches.size());
     diag.good_matches = static_cast<int>(match.good_matches.size());
 
-    // 2. Match visualisation (raw + good)
     if (viewer_) {
         viewer_->show_matches(prev_frame, curr_frame,
                               match.raw_matches, match.good_matches);
@@ -81,7 +70,6 @@ StepDiagnostics Frontend::process(
         return reject("reject_low_good_match_count");
     }
 
-    // 3. Epipolar geometry (essential matrix + inlier mask)
     EpipolarResult epi = estimate_epipolar(match.pts_prev, match.pts_curr, K_);
     diag.epipolar_inliers = epi.num_inliers;
     diag.epi_error        = epi.mean_epi_error;
@@ -93,7 +81,6 @@ StepDiagnostics Frontend::process(
         return reject("reject_epipolar_estimation_failed");
     }
 
-    // 4. Pose recovery from E  (relative motion: X_2 = R_21 X_1 + t_21)
     PoseRecoveryResult pose_rec = recover_pose_from_essential(
         epi, match.pts_prev, match.pts_curr, K_);
 
@@ -101,11 +88,9 @@ StepDiagnostics Frontend::process(
         return reject("reject_pose_recovery_failed");
     }
 
-    // Step rotation for diagnostics / acceptance check
     diag.step_r_deg  = rotation_angle_deg(pose_rec.R);
-    diag.step_t_norm = pose_rec.t.norm();  // always ≈1.0 for monocular
+    diag.step_t_norm = pose_rec.t.norm();  // always ~1.0 for monocular
 
-    // 5. Motion-bounds acceptance check
     AcceptedMotionStats recent_stats = compute_recent_motion_stats(recent_accepted_steps_);
     if (!evaluate_motion_acceptance(diag, recent_stats)) {
         curr_frame.pose = prev_frame.pose;
@@ -113,11 +98,9 @@ StepDiagnostics Frontend::process(
         return diag;
     }
 
-    // 6. Accept: update pose from epipolar
     curr_frame.pose  = Pose::from_relative(prev_frame.pose, pose_rec.R, pose_rec.t);
     diag.pose_source = "epipolar";
 
-    // 7. Triangulate epipolar inliers → new map points with observations
     std::vector<cv::Point2f> tri_pts_prev, tri_pts_curr;
     std::vector<int>         tri_match_indices;
 
@@ -144,7 +127,6 @@ StepDiagnostics Frontend::process(
             mp.add_observation(prev_frame.id, dm.queryIdx);
             mp.add_observation(curr_frame.id, dm.trainIdx);
 
-            // Store representative descriptor from prev frame observation
             if (dm.queryIdx < prev_frame.descriptors.rows) {
                 mp.descriptor = prev_frame.descriptors.row(dm.queryIdx).clone();
             }
@@ -154,17 +136,13 @@ StepDiagnostics Frontend::process(
         diag.triangulated_points = tri.num_valid;
     }
 
-    // 8. Keyframe selection
     ++accepted_since_kf_;
     ++accepted_total_;
 
-    // Find the last keyframe Frame for baseline comparison
     const Frame* last_kf = (last_kf_frame_idx_ >= 0)
                            ? &map.frame_at(last_kf_frame_idx_)
                            : nullptr;
 
-    // The current frame's index in SlamMap is the last one added
-    // (we look it up by matching id)
     int curr_frame_idx = -1;
     for (int i = map.frame_count() - 1; i >= 0; --i) {
         if (map.frame_at(i).id == curr_frame.id) { curr_frame_idx = i; break; }
@@ -177,25 +155,20 @@ StepDiagnostics Frontend::process(
         }
     }
 
-    // 9. Periodic PnP relocalization against global map
     if (accepted_total_ % kPnpPeriod == 0 && map.map_point_count() >= 20) {
         try_periodic_pnp(curr_frame, map, diag);
     }
 
-    // 10. Inlier match visualisation (after E-filtering)
     if (viewer_) {
-        // Build DMatch list of inliers only for the filtered window
         std::vector<cv::DMatch> inlier_dmatches;
         for (int i = 0; i < diag.good_matches; ++i) {
             if (!pose_rec.inlier_mask.empty() && !pose_rec.inlier_mask[i]) continue;
             inlier_dmatches.push_back(match.good_matches[i]);
         }
-        // Re-display filtered window with the E-inliers
         viewer_->show_matches(prev_frame, curr_frame,
                               match.raw_matches, inlier_dmatches);
     }
 
-    // 11. Finalise acceptance bookkeeping
     diag.accepted = true;
     if (diag.reason == "unknown") diag.reason = "accepted";
 
@@ -208,22 +181,15 @@ StepDiagnostics Frontend::process(
     return diag;
 }
 
-// Keyframe helpers
-
 bool Frontend::should_be_keyframe(
     const Frame& last_kf, const Frame& curr_frame,
     const StepDiagnostics& diag) const
 {
-    // Always create a new keyframe if enough accepted frames have passed
     if (accepted_since_kf_ >= kMaxAcceptedPerKf) return true;
-
-    // Create if rotation since last keyframe is significant
     if (diag.step_r_deg >= kKfMinRotDeg) return true;
-
-    // Create if triangulation was very productive (new area)
     if (diag.triangulated_points > 80) return true;
 
-    // Fallback: look at cumulative rotation from last KF
+    // Cumulative rotation from last keyframe
     const Eigen::Matrix3d dR =
         curr_frame.pose.rotation_matrix *
         last_kf.pose.rotation_matrix.transpose();
@@ -236,7 +202,7 @@ void Frontend::register_keyframe(
     Frame& curr_frame, int frame_idx,
     SlamMap& map, StepDiagnostics& diag)
 {
-    map.register_keyframe(frame_idx);  // sets curr_frame.is_keyframe, .keyframe_db_idx
+    map.register_keyframe(frame_idx);
     curr_frame.is_keyframe = true;
 
     int kf_db_idx = kf_db_.add_keyframe(
@@ -247,7 +213,6 @@ void Frontend::register_keyframe(
     accepted_since_kf_ = 0;
     diag.num_keyframes = map.keyframe_count();
 
-    // Attempt loop closure once we have enough keyframes
     if (kf_db_.count() >= kLoopMinKeyframes) {
         LoopClosureResult lc = try_loop_closure(
             map, kf_db_,
@@ -264,19 +229,14 @@ void Frontend::register_keyframe(
         diag.loop_max_map_point_displacement = lc.max_map_point_displacement;
 
         if (lc.correction_applied) {
-            // Cull any map points invalidated by the correction
             map.cull_map_points(2);
         }
     }
 }
 
-// Periodic PnP relocalization
-
 void Frontend::try_periodic_pnp(
     Frame& curr_frame, SlamMap& map, StepDiagnostics& diag)
 {
-    // Collect all valid map points that have a stored descriptor.
-    // Match their descriptors against the current frame to get 3D-2D pairs.
     std::vector<int>           mp_indices;
     cv::Mat                    mp_descriptors;
 
@@ -289,7 +249,6 @@ void Frontend::try_periodic_pnp(
 
     if (mp_indices.empty() || curr_frame.descriptors.empty()) return;
 
-    // kNN match (k=2) with Lowe ratio test
     cv::BFMatcher bf(cv::NORM_HAMMING, false);
     std::vector<std::vector<cv::DMatch>> matches;
     try {
@@ -323,7 +282,7 @@ void Frontend::try_periodic_pnp(
 
     if (diag.pnp_correspondences < 12) return;
 
-    // Solve PnP — object points are in WORLD frame
+    // Object points are in world frame
     PnPResult pnp = solve_pnp(pts3d, pts2d, K_,
                                150, 3.0f, 0.995, 10);
     if (!pnp.success) return;
@@ -331,15 +290,10 @@ void Frontend::try_periodic_pnp(
     diag.pnp_inliers  = pnp.num_inliers;
     diag.reproj_error = pnp.mean_reproj_error;
 
-    // Only accept if quality is good
     if (pnp.num_inliers < 15 || pnp.mean_reproj_error > 3.0) return;
 
-    // Convert PnP output (world→camera) to absolute T_wc.
-    // This is the critical semantic difference from from_relative:
-    // object points are in world frame, so rvec/tvec give world→camera directly.
     Pose pnp_pose = Pose::from_world_to_camera_cv(pnp.rvec, pnp.tvec);
 
-    // Run LM optimizer on the PnP result using the inlier subset
     std::vector<cv::Point3f> inlier_pts3d;
     std::vector<cv::Point2f> inlier_pts2d;
     inlier_pts3d.reserve(pnp.num_inliers);
@@ -355,7 +309,6 @@ void Frontend::try_periodic_pnp(
     diag.reproj_before_optim = optim.reproj_before;
     diag.reproj_after_optim  = optim.reproj_after;
 
-    // Accept optimized pose if reprojection improved and is low enough
     const bool pose_ok = optim.reproj_after >= 0.0 &&
                          optim.reproj_after < 3.5;
 

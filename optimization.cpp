@@ -3,9 +3,7 @@
 #include <Eigen/Dense>
 #include <cmath>
 
-// Helpers
-
-// Skew-symmetric matrix [v]_×
+// Skew-symmetric matrix [v]_x
 static Eigen::Matrix3d skew(const Eigen::Vector3d& v) {
     Eigen::Matrix3d S;
     S <<  0.0,   -v.z(),  v.y(),
@@ -14,10 +12,8 @@ static Eigen::Matrix3d skew(const Eigen::Vector3d& v) {
     return S;
 }
 
-// 2×6 Jacobian of the reprojection residual w.r.t. left perturbation δξ of T_cw.
-//
-// x_c — 3D point in camera frame (must have z > 0).
-// J   = J_π * [ -[x_c]_×  |  I_3 ]
+// 2x6 Jacobian of reprojection residual w.r.t. left perturbation of T_cw.
+// J = J_pi * [-[x_c]_x | I_3], where J_pi is the 2x3 camera Jacobian.
 static Eigen::Matrix<double, 2, 6> reproj_jacobian(
     const Eigen::Vector3d& x_c,
     double fx, double fy)
@@ -26,12 +22,10 @@ static Eigen::Matrix<double, 2, 6> reproj_jacobian(
     const double inv_z  = 1.0 / zc;
     const double inv_z2 = inv_z * inv_z;
 
-    // J_π  (2×3): Jacobian of pixel coords w.r.t. camera-frame point
     Eigen::Matrix<double, 2, 3> J_pi;
     J_pi << fx * inv_z,  0.0,         -fx * xc * inv_z2,
             0.0,          fy * inv_z,  -fy * yc * inv_z2;
 
-    // ∂x_c / ∂[δφ, δρ] = [ -[x_c]_×  |  I_3 ]  (3×6)
     Eigen::Matrix<double, 3, 6> dx_dxi;
     dx_dxi.leftCols<3>()  = -skew(x_c);
     dx_dxi.rightCols<3>() =  Eigen::Matrix3d::Identity();
@@ -39,7 +33,6 @@ static Eigen::Matrix<double, 2, 6> reproj_jacobian(
     return J_pi * dx_dxi;
 }
 
-// Sum of squared reprojection errors given T_cw = (R, t).
 static double sum_squared_reproj(
     const Eigen::Matrix3d& R_cw,
     const Eigen::Vector3d& t_cw,
@@ -60,8 +53,6 @@ static double sum_squared_reproj(
     }
     return total;
 }
-
-// Public API
 
 double compute_reproj_error(
     const Pose&                     pose,
@@ -111,18 +102,15 @@ OptimResult optimize_pose_lm(
         return result;
     }
 
-    // Extract intrinsics
     cv::Mat K64;
     K.convertTo(K64, CV_64F);
     const double fx = K64.at<double>(0, 0), fy = K64.at<double>(1, 1);
     const double cx = K64.at<double>(0, 2), cy = K64.at<double>(1, 2);
 
-    // Convert pts3d to Eigen world-frame vectors (avoids repeated conversion)
     std::vector<Eigen::Vector3d> pts_w(n);
     for (int i = 0; i < n; ++i)
         pts_w[i] = {pts3d[i].x, pts3d[i].y, pts3d[i].z};
 
-    // Work in T_cw space
     Eigen::Matrix3d R_cw = initial_pose.R_cw();
     Eigen::Vector3d t_cw = initial_pose.t_cw();
 
@@ -133,7 +121,7 @@ OptimResult optimize_pose_lm(
     double prev_cost = sum_squared_reproj(R_cw, t_cw, pts_w, pts2d, fx, fy, cx, cy);
 
     for (int iter = 0; iter < max_iter; ++iter) {
-        // Build Hessian approximation H = Σ Jᵀ J  and gradient g = Σ Jᵀ r
+        // Build H = sum(J^T J) and g = sum(J^T r)
         Eigen::Matrix<double, 6, 6> H = Eigen::Matrix<double, 6, 6>::Zero();
         Eigen::Matrix<double, 6, 1> g = Eigen::Matrix<double, 6, 1>::Zero();
 
@@ -144,7 +132,7 @@ OptimResult optimize_pose_lm(
             const double u = fx * x_c.x() / x_c.z() + cx;
             const double v = fy * x_c.y() / x_c.z() + cy;
 
-            // Residual: projected - observed (matches J and normal equations)
+            // Residual: projected - observed
             const Eigen::Vector2d r(u - pts2d[i].x, v - pts2d[i].y);
 
             const auto J = reproj_jacobian(x_c, fx, fy);
@@ -152,25 +140,22 @@ OptimResult optimize_pose_lm(
             g += J.transpose() * r;
         }
 
-        // LM damping: scale diagonal by (1 + λ)
+        // LM damping
         Eigen::Matrix<double, 6, 6> H_lm = H;
         for (int k = 0; k < 6; ++k)
             H_lm(k, k) *= (1.0 + lambda);
 
-        // Solve: (H + λ diag(H)) δξ = -g
         const Eigen::Matrix<double, 6, 1> delta = H_lm.ldlt().solve(-g);
 
         if (!delta.allFinite()) break;
 
-        // Trial update ——————————————————————————————————————————————————————
         const Eigen::Vector3d delta_phi = delta.head<3>();
         const Eigen::Vector3d delta_rho = delta.tail<3>();
 
-        // Rotation update via Rodrigues
+        // Rotation update via Rodrigues formula
         const double angle = delta_phi.norm();
         Eigen::Matrix3d delta_R;
         if (angle < 1e-9) {
-            // First-order approximation for tiny angles
             delta_R = Eigen::Matrix3d::Identity() + skew(delta_phi);
         } else {
             delta_R = Eigen::AngleAxisd(angle, delta_phi / angle)
@@ -184,7 +169,6 @@ OptimResult optimize_pose_lm(
             sum_squared_reproj(R_new, t_new, pts_w, pts2d, fx, fy, cx, cy);
 
         if (new_cost < prev_cost) {
-            // Accept step
             R_cw      = R_new;
             t_cw      = t_new;
             prev_cost = new_cost;
@@ -197,7 +181,7 @@ OptimResult optimize_pose_lm(
                 break;
             }
         } else {
-            // Reject step — increase damping
+            // Reject step -- increase damping
             lambda *= 10.0;
             if (lambda > 1e8) {
                 result.iterations = iter + 1;
@@ -207,7 +191,7 @@ OptimResult optimize_pose_lm(
     }
     if (result.iterations == 0) result.iterations = max_iter;
 
-    // Convert optimised T_cw back to stored T_wc
+    // Convert T_cw back to stored T_wc
     const Eigen::Matrix3d R_wc = R_cw.transpose();
     const Eigen::Vector3d t_wc = -(R_wc * t_cw);
     result.optimized_pose = Pose(R_wc, t_wc);

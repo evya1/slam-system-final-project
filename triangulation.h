@@ -13,13 +13,8 @@ struct TriangulationResult {
     int num_valid = 0;
 };
 
-// Triangulate N matched pairs using the linear DLT method (cv::triangulatePoints).
-//
-// pose1, pose2   — absolute T_wc poses (R_wc, t_wc convention).
-// K              — 3×3 intrinsic matrix (same for both cameras).
-// min/max_depth  — cheirality bounds in each camera frame.
-// min_parallax_deg — minimum parallax angle; points with less parallax are
-//                    rejected because triangulation is ill-conditioned.
+// Triangulate N matched pairs using DLT (cv::triangulatePoints).
+// pose1, pose2 - absolute T_wc poses. min_parallax_deg rejects ill-conditioned geometry.
 TriangulationResult triangulate_points(
     const std::vector<cv::Point2f>& pts1,
     const std::vector<cv::Point2f>& pts2,

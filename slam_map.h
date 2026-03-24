@@ -32,8 +32,6 @@ public:
     int frame_count()     const { return static_cast<int>(frames_.size());     }
     int map_point_count() const { return static_cast<int>(map_points_.size()); }
 
-    // ---- Keyframe tracking --------------------------------------------------
-
     // Mark frame at frames_[frame_idx] as a keyframe and record the index.
     void register_keyframe(int frame_idx);
 
@@ -41,9 +39,7 @@ public:
     const std::vector<int>& keyframe_indices() const { return keyframe_indices_; }
     int keyframe_count() const { return static_cast<int>(keyframe_indices_.size()); }
 
-    // ---- Map-point helpers --------------------------------------------------
-
-    // Build lookup: keypoint_idx in frame_id → map_point index in map_points_.
+    // Build lookup: keypoint_idx in frame_id -> map_point index in map_points_.
     std::unordered_map<int, int> build_kp_to_mp_index(int frame_id) const;
 
     // Invalidate map points with fewer than min_observations observations,

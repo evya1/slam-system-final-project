@@ -14,21 +14,9 @@ class Viewer;
 
 // Monocular visual-odometry frontend.
 //
-// Processing pipeline per frame pair:
-//   1. Feature matching (ORB + BF + Lowe) — raw and filtered
-//   2. Show raw and filtered match visualisation
-//   3. Essential-matrix estimation (RANSAC)
-//   4. Epipolar error before/after geometry
-//   5. Relative pose recovery from E (recoverPose convention: X_2 = R_21 X_1 + t_21)
-//   6. Motion-bounds acceptance check
-//   7. Compose absolute trajectory via Pose::from_relative
-//   8. Triangulate epipolar inliers → new MapPoints with observations
-//   9. Keyframe selection and KeyframeDB update
-//  10. Periodic PnP relocalization against global map (every kPnpPeriod accepted frames)
-//      — object points are in WORLD frame → use Pose::from_world_to_camera_cv
-//      — optimize with LM
-//  11. Loop-closure attempt on keyframes
-//  12. Diagnostics collection
+// Per-frame pipeline: feature matching -> essential matrix -> pose recovery ->
+// motion acceptance -> triangulation -> keyframe selection -> periodic PnP ->
+// loop closure attempt -> diagnostics.
 class Frontend {
 public:
     // K            — 3×3 camera intrinsic matrix.
@@ -63,7 +51,6 @@ private:
     cv::Mat          K_;
     Viewer*          viewer_ = nullptr;
 
-    // Keyframe tracking
     KeyframeDB kf_db_;
     int  last_kf_frame_idx_  = -1;  // SlamMap index of the most recent keyframe
     int  accepted_since_kf_  = 0;   // accepted frames since last keyframe

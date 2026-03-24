@@ -16,7 +16,6 @@ static int verify_loop_geometry(
 {
     if (old_kf.descriptors.empty() || curr_kf.descriptors.empty()) return 0;
 
-    // Match descriptors (Lowe ratio)
     cv::BFMatcher bf(cv::NORM_HAMMING, false);
     std::vector<std::vector<cv::DMatch>> matches;
     try {
@@ -79,7 +78,7 @@ static std::tuple<int, double, double> apply_pose_graph_correction(
     // Positional drift: current says it's at P_curr.t but should be near P_old.t
     const Eigen::Vector3d drift_t = P_curr.translation_vector - P_old.translation_vector;
 
-    // Rotational drift: R_drift * P_old.R = P_curr.R  →  R_drift = P_curr.R * P_old.R^T
+    // Rotational drift: R_drift = P_curr.R * P_old.R^T
     const Eigen::Matrix3d R_drift = P_curr.rotation_matrix * P_old.rotation_matrix.transpose();
     const Eigen::AngleAxisd aa_drift(R_drift);
     const double            drift_angle = aa_drift.angle();
@@ -87,9 +86,7 @@ static std::tuple<int, double, double> apply_pose_graph_correction(
 
     const int span = curr_frame_idx - old_frame_idx;
 
-    // Step 1 — Save old camera centres and compute per-frame corrections BEFORE
-    //          modifying any pose.  We need the old t_wc to correctly transform
-    //          world-space map points later.
+    // Save old camera centres before modifying poses; needed to reposition map points.
     std::vector<FrameCorrection> corrections(curr_frame_idx + 1);
     for (int idx = old_frame_idx; idx <= curr_frame_idx; ++idx) {
         const Frame& f = map.frame_at(idx);
@@ -106,26 +103,15 @@ static std::tuple<int, double, double> apply_pose_graph_correction(
         corrections[idx].delta_t  = -(alpha * drift_t);  // camera centre moves by this
     }
 
-    // Step 2 — Apply pose corrections to all frames in the window.
+    // Apply pose corrections.
     for (int idx = old_frame_idx; idx <= curr_frame_idx; ++idx) {
         Frame& f = map.frame_at(idx);
         f.pose.translation_vector += corrections[idx].delta_t;
         f.pose.rotation_matrix = corrections[idx].R_corr * f.pose.rotation_matrix;
     }
 
-    // Step 3 — Reposition map-point world coordinates.
-    //
-    // For each map point whose ANCHOR frame (first observation) is inside the
-    // correction window, apply the same SE(3) delta that was applied to the
-    // anchor camera.  This keeps the bearing ray from the anchor frame
-    // invariant in the corrected world frame:
-    //
-    //   p_cam = R_cw_old * (p_world_old - t_wc_old)
-    //   p_world_new = R_corr * (p_world_old - t_wc_old) + t_wc_new
-    //               = R_corr * (p_world_old - t_wc_old) + t_wc_old + delta_t
-    //
-    // All quantities are in already-established map scale — no unit-translation
-    // artefact is introduced.
+    // Reposition map points: apply the same SE(3) delta as their anchor frame.
+    // Keeps the bearing ray from each anchor frame invariant in the corrected world.
 
     const int win_id_lo = map.frame_at(old_frame_idx).id;
     const int win_id_hi = map.frame_at(curr_frame_idx).id;
@@ -137,18 +123,15 @@ static std::tuple<int, double, double> apply_pose_graph_correction(
     for (MapPoint& mp : map.map_points()) {
         if (!mp.valid || mp.observations.empty()) continue;
 
-        // Use first observation as the anchor frame.
         const int anchor_id = mp.observations[0].frame_id;
         if (anchor_id < win_id_lo || anchor_id > win_id_hi) continue;
 
-        // In this project frame_id == frame_idx (frames assigned sequentially from 0).
-        const int anchor_idx = anchor_id;
+        const int anchor_idx = anchor_id;  // frame_id == frame_idx in this project
         const FrameCorrection& fc = corrections[anchor_idx];
 
         const Eigen::Vector3d p_old = mp.position;
         mp.position = fc.R_corr * (p_old - fc.old_t_wc) + fc.old_t_wc + fc.delta_t;
 
-        // Sanity checks
         if (!mp.position.allFinite()) {
             mp.valid = false;
             continue;
@@ -169,8 +152,6 @@ static std::tuple<int, double, double> apply_pose_graph_correction(
     return {pts_updated, avg_disp, max_disp};
 }
 
-// Public entry point
-
 LoopClosureResult try_loop_closure(
     SlamMap&          map,
     const KeyframeDB& kf_db,
@@ -187,7 +168,6 @@ LoopClosureResult try_loop_closure(
 
     const Frame& curr_frame = map.frame_at(current_frame_idx);
 
-    // 1. Appearance-based candidate retrieval
     int cand_db_idx = kf_db.find_loop_candidate(
         curr_frame.descriptors,
         curr_frame.id,
@@ -212,7 +192,6 @@ LoopClosureResult try_loop_closure(
               << " ↔ frame " << old_frame.id
               << "  appearance_score >= " << min_appearance_score << "\n";
 
-    // 2. Geometric verification (essential matrix)
     int inliers = verify_loop_geometry(old_frame, curr_frame, K, min_verify_inliers);
     result.verification_inliers = inliers;
 
@@ -225,7 +204,6 @@ LoopClosureResult try_loop_closure(
     result.verified = true;
     std::cout << "[loop] verified! E-matrix inliers: " << inliers << "\n";
 
-    // 3. Pose-graph correction
     auto [pts_updated, avg_disp, max_disp] =
         apply_pose_graph_correction(map,
                                     result.matched_frame_idx,
