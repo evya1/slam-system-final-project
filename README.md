@@ -200,13 +200,14 @@ A few important details about the code:
 - The 3D map is sparse because it is built from matched features, not from dense depth images.
 - Since the input is monocular, the scale is arbitrary. The system estimates relative structure and motion, not metric distances.
 - Loop closure is implemented in a practical/simple way using keyframe descriptor matching and geometric verification. It is not a full production pose graph SLAM system.
-
 ## Contributors
 
 This project was developed equally by Evyatar B.A. and Itay Margolin.
 
-- Evyatar B.A. - worked on the main SLAM pipeline implementation during development, including feature extraction and matching, pose estimation flow, trajectory/map construction logic, debugging, dataset testing, and README/documentation.
-- Itay Margolin - worked on the main SLAM pipeline implementation during development, including feature extraction and matching, pose estimation flow, trajectory/map construction logic, debugging, dataset testing, and README/documentation.
+- Evyatar B.A.
+- Itay Margolin
+
+Both contributors worked on the main SLAM pipeline implementation during development, including feature extraction and matching, pose estimation flow, trajectory/map construction logic, debugging, dataset testing, and README/documentation.
 
 ## Project status
 
