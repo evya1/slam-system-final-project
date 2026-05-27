@@ -203,9 +203,9 @@ A few important details about the code:
 
 ## Contributors
 
-This project was developed equally by Evyatar Ben Avraham and Itay Margolin.
+This project was developed equally by Evyatar B.A. and Itay Margolin.
 
-- Evyatar Ben Avraham - worked on the main SLAM pipeline implementation during development, including feature extraction and matching, pose estimation flow, trajectory/map construction logic, debugging, dataset testing, and README/documentation.
+- Evyatar B.A. - worked on the main SLAM pipeline implementation during development, including feature extraction and matching, pose estimation flow, trajectory/map construction logic, debugging, dataset testing, and README/documentation.
 - Itay Margolin - worked on the main SLAM pipeline implementation during development, including feature extraction and matching, pose estimation flow, trajectory/map construction logic, debugging, dataset testing, and README/documentation.
 
 ## Project status
